@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # go2rtc - Lightweight RTSP to WebRTC/HLS proxy
+  # ============================================
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: smart_cctv_stream
+    restart: unless-stopped
+    ports:
+      - "1984:1984"   # Web UI + API
+      - "8554:8554"   # RTSP
+      - "8555:8555"   # WebRTC (TCP)
+      - "8555:8555/udp" # WebRTC (UDP)
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
+
+  # ============================================
+  # API Server - Node.js Backend
+  # ============================================
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: smart_cctv_api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+      - ./server/src:/app/src
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_PATH=/app/data/smart_cctv.db
+      - RECORDINGS_PATH=/app/data/recordings
+      - SNAPSHOTS_PATH=/app/data/snapshots
+      - GO2RTC_URL=http://localhost:1984
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      - go2rtc
+    network_mode: host
+
+  # ============================================
+  # Web Frontend - Nginx + React Build
+  # ============================================
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: smart_cctv_web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    environment:
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
