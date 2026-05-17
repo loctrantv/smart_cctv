@@ -114,32 +114,30 @@ class DetectionWorker {
       const killProc = () => {
         if (!proc) return;
         try {
-          proc.stdin?.destroy();
           proc.stdout?.destroy();
           proc.stderr?.destroy();
           proc.kill('SIGKILL');
         } catch {}
       };
       
-      // Hard timeout: kill after 8s
       const hardTimer = setTimeout(() => {
         killProc();
         done();
       }, 8000);
-      
+  
       proc = spawn('ffmpeg', [
+        '-y',
         '-rtsp_transport', 'tcp',
-        '-stimeout', '5000000',      // socket timeout 5s (microseconds)
-        '-timeout', '5000000',       // connection timeout 5s (microseconds)
-        '-i', rtspUrl,
+        '-i', rtspUrl,          // URL gốc
         '-frames:v', '1',
         '-q:v', '5',
-        '-vf', 'scale=1280:-1',      // optional: giới hạn resolution để nhanh hơn
-        '-y', outputPath,
+        outputPath,
       ], {
-        stdio: 'pipe',
+        stdio: ['ignore', 'ignore', 'pipe'],
         detached: false,
       });
+      
+      proc.stderr?.resume(); // drain stderr để không bị block
       
       proc.on('close', () => {
         clearTimeout(hardTimer);

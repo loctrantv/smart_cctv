@@ -35,71 +35,53 @@ class RecordingManager {
     
     this.db.prepare(`
       INSERT INTO recordings (id, camera_id, file_path, file_name, start_time, status)
-      VALUES (?, ?, ?, ?, datetime('now'), 'recording')
+    VALUES (?, ?, ?, ?, datetime('now'), 'recording')
     `).run(recordingId, camera.id, filePath, fileName);
     
     const args = [
-      // --- RTSP connection options (phải đặt TRƯỚC -i) ---
+      '-y',
       '-rtsp_transport', 'tcp',
-      '-stimeout', '10000000',       // socket I/O timeout: 10s (microseconds)
-      '-timeout', '10000000',        // connection timeout: 10s
-      '-reconnect', '1',             // tự reconnect nếu mất stream
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '5',   // tối đa 5s giữa các lần reconnect
-      
-      '-i', camera.rtsp_url,
-      
-      // --- Output options ---
-      '-c', 'copy',                  // stream copy, gần như 0 CPU
-      '-f', 'mp4',
-      // FIX: dùng frag_keyframe+empty_moov, bỏ faststart (conflict khi stream)
-      '-movflags', '+frag_keyframe+empty_moov',
+      '-i', camera.rtsp_url,      // URL gốc, không thêm gì
+      '-c:v', 'copy',             // copy H.265 không re-encode
+      '-c:a', 'aac',              // PCM ALAW → AAC (giống Python đang chạy)
+      '-movflags', '+faststart',  // giống Python đang chạy
       '-t', String(segmentMinutes * 60),
-      '-y', fullPath,
+      fullPath,
     ];
     
     const proc = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'ignore', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       detached: false,
     });
     
-    let stderrBuffer = '';
+    proc.stderr.resume();
+    
     proc.stderr.on('data', (data) => {
       const msg = data.toString();
-      stderrBuffer += msg;
-      
-      // Log lỗi thực sự, bỏ qua các thông báo thông thường
-      if (/error|failed|invalid/i.test(msg) && !/configuration|encoder|decoder/i.test(msg)) {
+      if (/error|failed|400|401|403/i.test(msg)) {
         console.error(`[REC] ${camera.name}: ${msg.trim()}`);
       }
     });
     
     proc.on('close', (code) => {
       const actualDuration = Math.round((Date.now() - startTime) / 1000);
-      
       try {
         const fileExists = fs.existsSync(fullPath);
         const fileSize = fileExists ? fs.statSync(fullPath).size : 0;
-        const isValidFile = fileExists && fileSize > 10000; // > 10KB mới tính là hợp lệ
+        const isValid = fileExists && fileSize > 10000;
         
         this.db.prepare(`
-          UPDATE recordings
-          SET end_time = datetime('now'),
-              duration_seconds = ?,
-              size_bytes = ?,
-              status = ?
-          WHERE id = ?
-        `).run(
-          actualDuration,
-          fileSize,
-          isValidFile ? 'completed' : 'failed',
-          recordingId
-        );
+        UPDATE recordings
+        SET end_time = datetime('now'),
+            duration_seconds = ?,
+            size_bytes = ?,
+            status = ?
+        WHERE id = ?
+      `).run(actualDuration, fileSize, isValid ? 'completed' : 'failed', recordingId);
         
-        if (!isValidFile && fileExists) {
-          // Xoá file rác
+        if (!isValid && fileExists) {
           try { fs.unlinkSync(fullPath); } catch {}
-          console.warn(`[REC] ${camera.name}: file too small (${fileSize} bytes), deleted`);
+          console.warn(`[REC] ${camera.name}: file invalid (${fileSize} bytes), deleted`);
         }
       } catch (e) {
         console.error('[REC] DB update error:', e.message);
@@ -107,10 +89,8 @@ class RecordingManager {
       
       this.broadcast({ type: 'recording_completed', cameraId: camera.id, recordingId });
       
-      // Tiếp tục segment tiếp theo nếu chưa stop
       const info = this.processes.get(camera.id);
       if (info && !info.stopping) {
-        // Delay nhỏ để tránh reconnect loop quá nhanh khi camera lỗi
         setTimeout(() => {
           if (this.processes.has(camera.id) && !this.processes.get(camera.id).stopping) {
             this._spawnSegment(camera);
@@ -126,13 +106,7 @@ class RecordingManager {
       this.processes.delete(camera.id);
     });
     
-    this.processes.set(camera.id, {
-      process: proc,
-      recordingId,
-      stopping: false,
-      startTime,
-    });
-    
+    this.processes.set(camera.id, { process: proc, recordingId, stopping: false, startTime });
     this.broadcast({ type: 'recording_started', cameraId: camera.id, recordingId });
   }
   
