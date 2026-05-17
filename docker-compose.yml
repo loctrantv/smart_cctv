@@ -40,6 +40,7 @@ services:
       - RECORDINGS_PATH=/app/data/recordings
       - SNAPSHOTS_PATH=/app/data/snapshots
       - GO2RTC_URL=http://camera2.tranhtuongtravinh.com/go2rtc
+      - GO2RTC_RTSP_URL=rtsp://localhost:8554
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
     depends_on:
       - go2rtc

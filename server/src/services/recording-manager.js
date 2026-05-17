@@ -4,9 +4,10 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
 class RecordingManager {
-  constructor(db, recordingsPath, broadcast) {
+  constructor(db, recordingsPath, broadcast, go2rtcRtspUrl) {
     this.db = db;
     this.recordingsPath = recordingsPath;
+    this.go2rtcRtspUrl = go2rtcRtspUrl || 'rtsp://localhost:8554';
     this.broadcast = broadcast;
     this.processes = new Map(); // cameraId -> { process, recordingId, stopping, startTime }
   }
@@ -41,7 +42,7 @@ class RecordingManager {
     const args = [
       '-y',
       '-rtsp_transport', 'tcp',
-      '-i', camera.rtsp_url,      // URL gốc, không thêm gì
+      '-i', `${this.go2rtcRtspUrl}/${camera.stream_id}`,      // URL gốc, không thêm gì
       '-c:v', 'copy',             // copy H.265 không re-encode
       '-c:a', 'aac',              // PCM ALAW → AAC (giống Python đang chạy)
       '-movflags', '+faststart',  // giống Python đang chạy

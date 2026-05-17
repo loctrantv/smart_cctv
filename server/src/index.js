@@ -24,6 +24,8 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'smart
 const RECORDINGS_PATH = process.env.RECORDINGS_PATH || path.join(__dirname, '..', 'data', 'recordings');
 const SNAPSHOTS_PATH = process.env.SNAPSHOTS_PATH || path.join(__dirname, '..', 'data', 'snapshots');
 const GO2RTC_URL = process.env.GO2RTC_URL || 'http://camera2.tranhtuongtravinh.com/go2rtc';
+// go2rtc RTSP port (mặc định 8554)
+const GO2RTC_RTSP_URL = process.env.GO2RTC_RTSP_URL || 'rtsp://192.168.1.201:8554';
 
 // Ensure directories exist
 [RECORDINGS_PATH, SNAPSHOTS_PATH, path.dirname(DB_PATH)].forEach(dir => {
@@ -65,9 +67,9 @@ function broadcast(event) {
 // Services
 // ============================================
 const go2rtcClient = new Go2RTCClient(GO2RTC_URL);
-const recordingManager = new RecordingManager(db, RECORDINGS_PATH, broadcast);
+const recordingManager = new RecordingManager(db, RECORDINGS_PATH, broadcast, GO2RTC_RTSP_URL); // thêm GO2RTC_RTSP_URL
 const storageManager = new StorageManager(db, RECORDINGS_PATH, SNAPSHOTS_PATH);
-const detectionWorker = new DetectionWorker(db, SNAPSHOTS_PATH, go2rtcClient, broadcast);
+const detectionWorker = new DetectionWorker(db, SNAPSHOTS_PATH, go2rtcClient, broadcast, GO2RTC_RTSP_URL); // thêm GO2RTC_RTSP_URL
 
 // ============================================
 // Middleware
@@ -88,7 +90,7 @@ app.use((req, res, next) => {
   req.detectionWorker = detectionWorker;
   req.storageManager = storageManager;
   req.broadcast = broadcast;
-  req.config = { RECORDINGS_PATH, SNAPSHOTS_PATH, GO2RTC_URL };
+  req.config = { RECORDINGS_PATH, SNAPSHOTS_PATH, GO2RTC_URL, GO2RTC_RTSP_URL }; // thêm GO2RTC_RTSP_URL
   next();
 });
 

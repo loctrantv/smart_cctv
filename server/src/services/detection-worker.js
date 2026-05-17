@@ -9,10 +9,11 @@ const { v4: uuidv4 } = require('uuid');
  * For full AI detection, this can be extended with ONNX Runtime
  */
 class DetectionWorker {
-  constructor(db, snapshotsPath, go2rtcClient, broadcast) {
+  constructor(db, snapshotsPath, go2rtcClient, broadcast, go2rtcRtspUrl) {
     this.db = db;
     this.snapshotsPath = snapshotsPath;
     this.go2rtcClient = go2rtcClient;
+    this.go2rtcRtspUrl = go2rtcRtspUrl || 'rtsp://localhost:8554';
     this.broadcast = broadcast;
     this.workers = new Map(); // cameraId -> { interval, lastHash }
     this.intervalMs = parseInt(process.env.DETECTION_INTERVAL_MS || '3000');
@@ -63,7 +64,7 @@ class DetectionWorker {
       const snapName = `snap_${Date.now()}.jpg`;
       const snapPath = path.join(snapDir, snapName);
 
-      await this._captureSnapshot(camera.rtsp_url, snapPath);
+      await this._captureSnapshot(`${this.go2rtcRtspUrl}/${camera.stream_id}`, snapPath);
 
       if (!fs.existsSync(snapPath)) return;
 
