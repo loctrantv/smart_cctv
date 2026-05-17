@@ -17,25 +17,36 @@ class DetectionWorker {
     this.workers = new Map(); // cameraId -> { interval, lastHash }
     this.intervalMs = parseInt(process.env.DETECTION_INTERVAL_MS || '3000');
   }
-
+  
   startDetection(camera) {
     if (this.workers.has(camera.id)) return;
     console.log(`[DET] Starting detection for: ${camera.name}`);
-
+    
     const cameraSnapDir = path.join(this.snapshotsPath, camera.id);
     fs.mkdirSync(cameraSnapDir, { recursive: true });
-
-    const interval = setInterval(() => {
-      this._captureAndAnalyze(camera, cameraSnapDir);
-    }, this.intervalMs);
-
-    this.workers.set(camera.id, { interval, lastFrame: null, consecutiveEmpty: 0 });
+    
+    // Dùng setTimeout thay vì setInterval để tránh chồng lấp
+    const scheduleNext = () => {
+      const worker = this.workers.get(camera.id);
+      if (!worker || worker.stopped) return;
+      
+      worker.timer = setTimeout(async () => {
+        if (!worker.stopped) {
+          await this._captureAndAnalyze(camera, cameraSnapDir);
+          scheduleNext(); // chỉ schedule tiếp sau khi xong
+        }
+      }, this.intervalMs);
+    };
+    
+    this.workers.set(camera.id, { timer: null, lastFrame: null, stopped: false });
+    scheduleNext();
   }
-
+  
   stopDetection(cameraId) {
     const worker = this.workers.get(cameraId);
     if (!worker) return;
-    clearInterval(worker.interval);
+    worker.stopped = true;
+    clearTimeout(worker.timer);
     this.workers.delete(cameraId);
     console.log(`[DET] Stopped detection for camera: ${cameraId}`);
   }
@@ -88,24 +99,58 @@ class DetectionWorker {
       // Silent fail - detection is non-critical
     }
   }
-
+  
   _captureSnapshot(rtspUrl, outputPath) {
     return new Promise((resolve) => {
-      const proc = spawn('ffmpeg', [
+      let resolved = false;
+      let proc = null;
+      
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      
+      const killProc = () => {
+        if (!proc) return;
+        try {
+          proc.stdin?.destroy();
+          proc.stdout?.destroy();
+          proc.stderr?.destroy();
+          proc.kill('SIGKILL');
+        } catch {}
+      };
+      
+      // Hard timeout: kill after 8s
+      const hardTimer = setTimeout(() => {
+        killProc();
+        done();
+      }, 8000);
+      
+      proc = spawn('ffmpeg', [
         '-rtsp_transport', 'tcp',
+        '-stimeout', '5000000',      // socket timeout 5s (microseconds)
+        '-timeout', '5000000',       // connection timeout 5s (microseconds)
         '-i', rtspUrl,
         '-frames:v', '1',
         '-q:v', '5',
+        '-vf', 'scale=1280:-1',      // optional: giới hạn resolution để nhanh hơn
         '-y', outputPath,
-      ], { stdio: 'pipe', timeout: 10000 });
-
-      proc.on('close', () => resolve());
-      proc.on('error', () => resolve());
-
-      setTimeout(() => {
-        try { proc.kill('SIGKILL'); } catch {}
-        resolve();
-      }, 10000);
+      ], {
+        stdio: 'pipe',
+        detached: false,
+      });
+      
+      proc.on('close', () => {
+        clearTimeout(hardTimer);
+        done();
+      });
+      
+      proc.on('error', () => {
+        clearTimeout(hardTimer);
+        killProc();
+        done();
+      });
     });
   }
 
