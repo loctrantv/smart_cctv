@@ -125,13 +125,14 @@ class DetectionWorker {
         killProc();
         done();
       }, 8000);
-  
+      
       proc = spawn('ffmpeg', [
         '-y',
         '-rtsp_transport', 'tcp',
         '-i', rtspUrl,          // URL gốc
-        '-frames:v', '1',
-        '-q:v', '5',
+        '-c:v', 'copy',             // copy H.265 không re-encode
+        '-c:a', 'aac',              // PCM ALAW → AAC (giống Python đang chạy)
+        '-movflags', '+faststart',  // giống Python đang chạy
         outputPath,
       ], {
         stdio: ['ignore', 'ignore', 'pipe'],
