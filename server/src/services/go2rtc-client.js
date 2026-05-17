@@ -103,21 +103,21 @@ class Go2RTCClient {
    * Get WebRTC URL for a stream
    */
   getWebRTCUrl(streamId) {
-    return `${this.baseUrl}/go2rtc/api/webrtc?src=${encodeURIComponent(streamId)}`;
+    return `${this.baseUrl}/api/webrtc?src=${encodeURIComponent(streamId)}`;
   }
   
   /**
    * Get HLS URL for a stream
    */
   getHLSUrl(streamId) {
-    return `${this.baseUrl}/go2rtc/api/stream.m3u8?src=${encodeURIComponent(streamId)}`;
+    return `${this.baseUrl}/api/stream.m3u8?src=${encodeURIComponent(streamId)}`;
   }
   
   /**
    * Get snapshot URL for a stream
    */
   getSnapshotUrl(streamId) {
-    return `${this.baseUrl}/go2rtc/api/frame.jpeg?src=${encodeURIComponent(streamId)}`;
+    return `${this.baseUrl}/api/frame.jpeg?src=${encodeURIComponent(streamId)}`;
   }
 }
 
