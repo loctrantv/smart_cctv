@@ -115,14 +115,20 @@ export default function Dashboard() {
                 className="camera-cell"
                 onClick={() => navigate(`/camera/${camera.id}`)}
                 id={`camera-cell-${camera.id}`}
+                /* Ép ô chứa cho phép co giãn theo luồng video */
+                style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}
               >
-                <VideoPlayer
-                  streamId={camera.stream_id}
-                  streams={camera.streams}
-                  autoPlay
-                  muted
-                  compact
-                />
+                {/* Thêm thuộc tính style hoặc class để ép fit cho video bên dưới */}
+                <div className="video-wrapper-fix" style={{ width: '100%', height: '100%', display: 'flex' }}>
+                  <VideoPlayer
+                    streamId={camera.stream_id}
+                    streams={camera.streams}
+                    autoPlay
+                    muted
+                    compact
+                  />
+                </div>
+      
                 <div className="camera-badge">
                   {camera.record_enabled ? (
                     <span className="badge badge-rec">● REC</span>

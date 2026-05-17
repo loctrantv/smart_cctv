@@ -174,7 +174,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
         muted={muted}
         playsInline
         controls={!compact}
-        style={{ width: '100%', height: '100%', objectFit: compact ? 'cover' : 'contain' }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain'}}
       />
       {!connected && (
         <div className="video-placeholder" style={{ position: 'absolute', inset: 0, background: 'var(--bg-secondary)' }}>
