@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3001;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'smart_cctv.db');
 const RECORDINGS_PATH = process.env.RECORDINGS_PATH || path.join(__dirname, '..', 'data', 'recordings');
 const SNAPSHOTS_PATH = process.env.SNAPSHOTS_PATH || path.join(__dirname, '..', 'data', 'snapshots');
-const GO2RTC_URL = 'http://localhost:1984';
+const GO2RTC_URL = process.env.GO2RTC_URL || 'http://localhost:1984';
 
 // Ensure directories exist
 [RECORDINGS_PATH, SNAPSHOTS_PATH, path.dirname(DB_PATH)].forEach(dir => {
