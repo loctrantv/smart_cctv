@@ -38,7 +38,7 @@ services:
       - DB_PATH=/app/data/smart_cctv.db
       - RECORDINGS_PATH=/app/data/recordings
       - SNAPSHOTS_PATH=/app/data/snapshots
-      - GO2RTC_URL=http://localhost:1984
+      - GO2RTC_URL=http://camera2.tranhtuongtravinh.com/go2rtc
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
     depends_on:
       - go2rtc
