@@ -1,54 +1,57 @@
+const http = require('http');
+const https = require('https');
+
 /**
  * Client for go2rtc REST API
  * Manages camera streams dynamically
- * Requires Node.js 18+ for native fetch API
  */
 class Go2RTCClient {
   constructor(baseUrl) {
     this.baseUrl = baseUrl;
   }
-  
+
   async _request(method, path, body = null) {
-    const url = new URL(path, this.baseUrl);
-    
-    const options = {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      // Sử dụng AbortSignal để xử lý timeout một cách tự nhiên
-      signal: AbortSignal.timeout(5000),
-    };
-    
-    if (body) {
-      options.body = JSON.stringify(body);
-    }
-    
-    try {
-      const response = await fetch(url, options);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const text = await response.text();
-      try {
-        return text ? JSON.parse(text) : {};
-      } catch {
-        return text;
-      }
-    } catch (error) {
-      if (error.name === 'TimeoutError') {
-        throw new Error('Request timeout');
-      }
-      throw error; // Ném lỗi ra ngoài để hàm gọi xử lý
-    }
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, this.baseUrl);
+      const client = url.protocol === 'https:' ? https : http;
+
+      const options = {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 5000,
+      };
+
+      const req = client.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(data ? JSON.parse(data) : {});
+          } catch {
+            resolve(data);
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout'));
+      });
+
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    });
   }
-  
+
   /**
    * Add or update a stream in go2rtc
    */
   async addStream(streamId, rtspUrl) {
     try {
-      // Go2rtc API sử dụng 'name' thay vì 'dst' trong các phiên bản mới
       const url = `/api/streams?name=${encodeURIComponent(streamId)}&src=${encodeURIComponent(rtspUrl)}`;
       await this._request('PUT', url);
       console.log(`[go2rtc] Stream added: ${streamId}`);
@@ -58,15 +61,13 @@ class Go2RTCClient {
       return false;
     }
   }
-  
+
   /**
    * Remove a stream from go2rtc
    */
   async removeStream(streamId) {
     try {
-      // Tương tự, sử dụng 'name' để xóa stream
-      const url = `/api/streams?name=${encodeURIComponent(streamId)}`;
-      await this._request('DELETE', url);
+      await this._request('DELETE', `/api/streams?name=${encodeURIComponent(streamId)}`);
       console.log(`[go2rtc] Stream removed: ${streamId}`);
       return true;
     } catch (err) {
@@ -74,7 +75,7 @@ class Go2RTCClient {
       return false;
     }
   }
-  
+
   /**
    * Get all active streams
    */
@@ -86,7 +87,7 @@ class Go2RTCClient {
       return {};
     }
   }
-  
+
   /**
    * Get info about a specific stream
    */
@@ -98,21 +99,21 @@ class Go2RTCClient {
       return null;
     }
   }
-  
+
   /**
    * Get WebRTC URL for a stream
    */
   getWebRTCUrl(streamId) {
     return `${this.baseUrl}/api/webrtc?src=${encodeURIComponent(streamId)}`;
   }
-  
+
   /**
    * Get HLS URL for a stream
    */
   getHLSUrl(streamId) {
     return `${this.baseUrl}/api/stream.m3u8?src=${encodeURIComponent(streamId)}`;
   }
-  
+
   /**
    * Get snapshot URL for a stream
    */
