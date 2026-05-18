@@ -36,6 +36,9 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=${PORT:-3001}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - JWT_SECRET=${JWT_SECRET:-smart_cctv_secure_signing_key_2026}
       - DB_PATH=${DB_PATH:-/app/data/smart_cctv.db}
       - RECORDINGS_PATH=${RECORDINGS_PATH:-/app/data/recordings}
       - SNAPSHOTS_PATH=${SNAPSHOTS_PATH:-/app/data/snapshots}
