@@ -5,11 +5,23 @@ import { VideoOff } from 'lucide-react';
  * VideoPlayer component supporting WebRTC and HLS playback
  * Falls back gracefully: WebRTC → HLS → Snapshot
  */
-export default function VideoPlayer({ streamId, streams, autoPlay = true, muted = true, compact = false }) {
+export default function VideoPlayer({ streamId, streams, autoPlay = true, muted = true, compact = false, onAspectRatioChange }) {
   const videoRef = useRef(null);
   const pcRef = useRef(null);
   const [mode, setMode] = useState('webrtc'); // webrtc | hls | error
   const [connected, setConnected] = useState(false);
+  const [aspectRatio, setLocalAspectRatio] = useState(16 / 9);
+
+  const handleLoadedMetadata = (e) => {
+    const video = e.target;
+    if (video.videoWidth && video.videoHeight) {
+      const ratio = video.videoWidth / video.videoHeight;
+      setLocalAspectRatio(ratio);
+      if (onAspectRatioChange) {
+        onAspectRatioChange(ratio);
+      }
+    }
+  };
 
   useEffect(() => {
     if (!streams || !streamId) return;
@@ -146,7 +158,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
 
   if (!streams) {
     return (
-      <div className="video-player-container">
+      <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
         <div className="video-placeholder">
           <VideoOff size={compact ? 20 : 32} />
           {!compact && <p>Không có stream</p>}
@@ -157,7 +169,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
 
   if (mode === 'error') {
     return (
-      <div className="video-player-container">
+      <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
         <div className="video-placeholder">
           <VideoOff size={compact ? 20 : 32} />
           {!compact && <p>Không thể kết nối camera</p>}
@@ -167,13 +179,14 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
   }
 
   return (
-    <div className="video-player-container">
+    <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
       <video
         ref={videoRef}
         autoPlay={autoPlay}
         muted={muted}
         playsInline
         controls={!compact}
+        onLoadedMetadata={handleLoadedMetadata}
         style={{ width: '100%', height: '100%', objectFit: 'contain'}}
       />
       {!connected && (

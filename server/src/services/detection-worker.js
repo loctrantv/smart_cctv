@@ -65,7 +65,39 @@ class DetectionWorker {
       const snapName = `snap_${Date.now()}.jpg`;
       const snapPath = path.join(snapDir, snapName);
 
-      await this._captureSnapshot(`${this.go2rtcRtspUrl}/${camera.stream_id}`, snapPath);
+      // Check if detection_zone is configured
+      let cropArgs = null;
+      if (camera.detection_zone) {
+        try {
+          if (camera.detection_zone.startsWith('[')) {
+            const zones = JSON.parse(camera.detection_zone);
+            if (Array.isArray(zones) && zones.length > 0) {
+              // Construct FFMPEG filter_complex!
+              // For each zone, crop and scale to a common resolution (e.g. 320x180) to allow vstack
+              const cropFilters = zones.map((z, idx) => {
+                return `[0:v]crop=in_w*${z.w.toFixed(3)}:in_h*${z.h.toFixed(3)}:in_w*${z.x.toFixed(3)}:in_h*${z.y.toFixed(3)},scale=320:180[c${idx}]`;
+              });
+              const inputs = zones.map((_, idx) => `[c${idx}]`).join('');
+              cropArgs = {
+                filterComplex: `${cropFilters.join('; ')}; ${inputs}vstack=inputs=${zones.length}`
+              };
+            }
+          } else {
+            // Legacy single zone format (x,y,w,h string)
+            const parts = camera.detection_zone.split(',').map(Number);
+            if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+              const [x, y, w, h] = parts;
+              cropArgs = {
+                vf: `crop=in_w*${w.toFixed(3)}:in_h*${h.toFixed(3)}:in_w*${x.toFixed(3)}:in_h*${y.toFixed(3)}`
+              };
+            }
+          }
+        } catch (e) {
+          console.error('[DET] Failed to parse detection zones:', e.message);
+        }
+      }
+
+      await this._captureSnapshot(`${this.go2rtcRtspUrl}/${camera.stream_id}`, snapPath, cropArgs);
 
       if (!fs.existsSync(snapPath)) return;
 
@@ -103,7 +135,7 @@ class DetectionWorker {
     }
   }
   
-  _captureSnapshot(rtspUrl, outputPath) {
+  _captureSnapshot(rtspUrl, outputPath, cropArgs) {
     return new Promise((resolve) => {
       let resolved = false;
       let proc = null;
@@ -128,14 +160,29 @@ class DetectionWorker {
         done();
       }, 8000);
       
-      proc = spawn('ffmpeg', [
+      const args = [
         '-y',
         '-rtsp_transport', 'tcp',
         '-i', rtspUrl,
+      ];
+
+      if (cropArgs) {
+        if (typeof cropArgs === 'string') {
+          args.push('-vf', cropArgs);
+        } else if (cropArgs.vf) {
+          args.push('-vf', cropArgs.vf);
+        } else if (cropArgs.filterComplex) {
+          args.push('-filter_complex', cropArgs.filterComplex);
+        }
+      }
+
+      args.push(
         '-vframes', '1',
         '-f', 'image2',
-        outputPath,
-      ], {
+        outputPath
+      );
+      
+      proc = spawn('ffmpeg', args, {
         stdio: ['ignore', 'ignore', 'pipe'],
         detached: false,
       });

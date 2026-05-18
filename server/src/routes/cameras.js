@@ -97,7 +97,7 @@ router.put('/:id', async (req, res) => {
 
     const {
       name, rtsp_url, enabled, record_enabled, detection_enabled,
-      record_mode, location, notes
+      record_mode, location, notes, detection_zone
     } = req.body;
 
     req.db.prepare(`
@@ -110,11 +110,12 @@ router.put('/:id', async (req, res) => {
         record_mode = COALESCE(?, record_mode),
         location = COALESCE(?, location),
         notes = COALESCE(?, notes),
+        detection_zone = COALESCE(?, detection_zone),
         updated_at = datetime('now')
       WHERE id = ?
     `).run(
       name, rtsp_url, enabled, record_enabled, detection_enabled,
-      record_mode, location, notes, req.params.id
+      record_mode, location, notes, detection_zone, req.params.id
     );
 
     // Update go2rtc stream if URL changed

@@ -117,6 +117,13 @@ function initDatabase(dbPath) {
     );
   `);
 
+  // Safe migration: add detection_zone to cameras if not exists
+  try {
+    db.exec("ALTER TABLE cameras ADD COLUMN detection_zone TEXT DEFAULT ''");
+  } catch (e) {
+    // Column already exists
+  }
+
   // Insert default settings if not exist
   const insertSetting = db.prepare(`
     INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)
