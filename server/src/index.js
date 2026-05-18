@@ -27,7 +27,7 @@ const PORT = process.env.PORT || 3001;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'smart_cctv.db');
 const RECORDINGS_PATH = process.env.RECORDINGS_PATH || path.join(__dirname, '..', 'data', 'recordings');
 const SNAPSHOTS_PATH = process.env.SNAPSHOTS_PATH || path.join(__dirname, '..', 'data', 'snapshots');
-const GO2RTC_URL = process.env.GO2RTC_URL || 'http://camera2.tranhtuongtravinh.com/go2rtc';
+const GO2RTC_URL = process.env.GO2RTC_URL || 'https://camera.tranhtuongtravinh.com/go2rtc';
 // go2rtc RTSP port (mặc định 8554)
 const GO2RTC_RTSP_URL = process.env.GO2RTC_RTSP_URL || 'rtsp://192.168.1.201:8554';
 

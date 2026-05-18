@@ -41,6 +41,7 @@ class RecordingManager {
       VALUES (?, ?, ?, ?, datetime('now'), 'recording')
     `).run(recordingId, camera.id, filePath, fileName);
     
+    console.log(`${this.go2rtcRtspUrl}/${camera.stream_id}`)
     const args = [
       '-y',
       '-rtsp_transport', 'tcp',
