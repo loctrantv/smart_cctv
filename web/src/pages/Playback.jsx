@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { getCameras, getTimeline, getRecordingStreamUrl } from '../utils/api';
+import { getCameras, getTimeline, getRecordingStreamUrl, deleteRecording } from '../utils/api';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Play, Pause, FastForward, SkipBack, SkipForward } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, FastForward, SkipBack, SkipForward, Trash2 } from 'lucide-react';
 
 export default function Playback() {
   const [cameras, setCameras] = useState([]);
@@ -36,6 +36,29 @@ export default function Playback() {
         videoRef.current.play();
       }
     }, 100);
+  };
+
+  const handleDeleteRecording = async (id) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa bản ghi này? File video trên ổ đĩa sẽ bị xóa vĩnh viễn.')) return;
+    try {
+      await deleteRecording(id);
+      
+      if (currentRecording && currentRecording.id === id) {
+        setCurrentRecording(null);
+        setPlaying(false);
+        if (videoRef.current) {
+          videoRef.current.src = '';
+        }
+      }
+      
+      if (selectedCamera) {
+        getTimeline(selectedCamera.id, selectedDate)
+          .then(setTimeline)
+          .catch(() => setTimeline({ recordings: [], events: [] }));
+      }
+    } catch (err) {
+      alert('Không thể xóa bản ghi: ' + (err.response?.data?.error || err.message));
+    }
   };
 
   const changeSpeed = () => {
@@ -214,9 +237,34 @@ export default function Playback() {
                           {Math.round((rec.duration_seconds || 0) / 60)} phút
                         </span>
                       </div>
-                      <span className="text-muted text-xs">
-                        {rec.size_bytes ? `${(rec.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-muted text-xs">
+                          {rec.size_bytes ? `${(rec.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteRecording(rec.id);
+                          }}
+                          className="btn-icon"
+                          style={{ 
+                            padding: 4, 
+                            color: 'var(--danger)', 
+                            opacity: 0.8,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '50%',
+                            border: 'none',
+                            background: 'none'
+                          }}
+                          title="Xóa bản ghi"
+                          onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+                          onMouseLeave={(e) => e.currentTarget.style.opacity = 0.8}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
