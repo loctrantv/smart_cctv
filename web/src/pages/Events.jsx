@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { getEvents, getCameras, getMediaUrl } from '../utils/api';
+import { getEvents, getCameras, getMediaUrl, deleteEvent } from '../utils/api';
 import { format } from 'date-fns';
-import { AlertTriangle, User, ScanFace, Activity, Filter } from 'lucide-react';
+import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2 } from 'lucide-react';
 import { useApp } from '../App';
 
 const typeIcons = { person: User, face: ScanFace, motion: Activity };
@@ -29,6 +29,16 @@ export default function Events() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteEvent = async (id) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa sự kiện này? Ảnh chụp của sự kiện trên ổ đĩa sẽ bị xóa vĩnh viễn.')) return;
+    try {
+      await deleteEvent(id);
+      fetchEvents();
+    } catch (err) {
+      alert('Không thể xóa sự kiện: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -100,6 +110,29 @@ export default function Events() {
                       Độ tin cậy: {(evt.confidence * 100).toFixed(0)}%
                     </div>
                   )}
+                </div>
+                <div className="event-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: 8 }}>
+                  <button
+                    onClick={() => handleDeleteEvent(evt.id)}
+                    className="btn-icon"
+                    style={{
+                      color: 'var(--danger)',
+                      opacity: 0.8,
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 8,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                    }}
+                    title="Xóa sự kiện"
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = 0.8}
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
               </div>
             );

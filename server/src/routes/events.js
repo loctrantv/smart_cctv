@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const router = express.Router();
 
 // GET /api/events - List detection events with filters
@@ -123,6 +125,18 @@ router.delete('/:id', (req, res) => {
     const event = req.db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
+    // Delete snapshot image file from disk if exists
+    if (event.snapshot_path) {
+      const snapshotFilePath = path.join(req.config.SNAPSHOTS_PATH, event.snapshot_path);
+      if (fs.existsSync(snapshotFilePath)) {
+        try {
+          fs.unlinkSync(snapshotFilePath);
+        } catch (e) {
+          console.error(`[Event] Failed to delete file ${snapshotFilePath}:`, e.message);
+        }
+      }
+    }
+
     req.db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
     res.json({ message: 'Event deleted' });
   } catch (err) {
@@ -151,6 +165,22 @@ router.delete('/', (req, res) => {
     if (where.length === 0) {
       return res.status(400).json({ error: 'Specify at least one filter (before, camera_id)' });
     }
+
+    // Find all events to delete their physical snapshot files first
+    const eventsToDelete = req.db.prepare(`
+      SELECT snapshot_path FROM events WHERE ${where.join(' AND ')}
+    `).all(...params);
+
+    eventsToDelete.forEach(event => {
+      if (event.snapshot_path) {
+        const snapshotFilePath = path.join(req.config.SNAPSHOTS_PATH, event.snapshot_path);
+        if (fs.existsSync(snapshotFilePath)) {
+          try {
+            fs.unlinkSync(snapshotFilePath);
+          } catch (e) {}
+        }
+      }
+    });
 
     const result = req.db.prepare(`
       DELETE FROM events WHERE ${where.join(' AND ')}
