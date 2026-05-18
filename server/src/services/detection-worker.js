@@ -129,10 +129,9 @@ class DetectionWorker {
       proc = spawn('ffmpeg', [
         '-y',
         '-rtsp_transport', 'tcp',
-        '-i', rtspUrl,          // URL gốc
-        '-c:v', 'copy',             // copy H.265 không re-encode
-        '-c:a', 'aac',              // PCM ALAW → AAC (giống Python đang chạy)
-        '-movflags', '+faststart',  // giống Python đang chạy
+        '-i', rtspUrl,
+        '-vframes', '1',
+        '-f', 'image2',
         outputPath,
       ], {
         stdio: ['ignore', 'ignore', 'pipe'],
