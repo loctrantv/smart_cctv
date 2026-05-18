@@ -7,6 +7,42 @@ const api = axios.create({
   timeout: 10000,
 });
 
+// Request interceptor to automatically attach Authorization header
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('smart_cctv_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
+});
+
+// Response interceptor to clear auth on 401 Unauthorized responses
+api.interceptors.response.use((response) => {
+  return response;
+}, (error) => {
+  if (error.response && error.response.status === 401) {
+    // Only clear token if we are not actively on /login page
+    if (!error.config.url.includes('/auth/login')) {
+      localStorage.removeItem('smart_cctv_token');
+      localStorage.removeItem('smart_cctv_user');
+      window.location.reload(); // Re-trigger App level verification which will mount the Login page
+    }
+  }
+  return Promise.reject(error);
+});
+
+// Authentication
+export const login = (username, password) => api.post('/auth/login', { username, password }).then(r => r.data);
+export const verifyToken = () => api.get('/auth/verify').then(r => r.data);
+
+// Helper to construct authenticated URLs for videos and images
+export const getMediaUrl = (path) => {
+  const token = localStorage.getItem('smart_cctv_token');
+  return `/media/${path}?token=${token}`;
+};
+
 // Cameras
 export const getCameras = () => api.get('/cameras').then(r => r.data);
 export const getCamera = (id) => api.get(`/cameras/${id}`).then(r => r.data);
@@ -21,7 +57,10 @@ export const getRecordings = (params) => api.get('/recordings', { params }).then
 export const getTimeline = (cameraId, date) => api.get(`/recordings/timeline/${cameraId}`, { params: { date } }).then(r => r.data);
 export const getRecordingDates = (cameraId) => api.get(`/recordings/dates/${cameraId}`).then(r => r.data);
 export const deleteRecording = (id) => api.delete(`/recordings/${id}`).then(r => r.data);
-export const getRecordingStreamUrl = (id) => `${API_BASE}/recordings/${id}/stream`;
+export const getRecordingStreamUrl = (id) => {
+  const token = localStorage.getItem('smart_cctv_token');
+  return `${API_BASE}/recordings/${id}/stream?token=${token}`;
+};
 
 // Events
 export const getEvents = (params) => api.get('/events', { params }).then(r => r.data);

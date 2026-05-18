@@ -3,7 +3,7 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import {
   LayoutGrid, Camera, PlayCircle, AlertTriangle,
-  Users, Settings, Menu, X, Wifi, WifiOff, Shield
+  Users, Settings, Menu, X, Wifi, WifiOff, Shield, LogOut
 } from 'lucide-react';
 
 import Dashboard from './pages/Dashboard';
@@ -12,15 +12,39 @@ import Playback from './pages/Playback';
 import Events from './pages/Events';
 import FaceLibrary from './pages/FaceLibrary';
 import SettingsPage from './pages/Settings';
+import Login from './pages/Login';
 
 // Context
 export const AppContext = createContext();
 export const useApp = () => useContext(AppContext);
 
 export default function App() {
+  const [token, setToken] = useState(localStorage.getItem('smart_cctv_token') || '');
+  const [user, setUser] = useState(() => {
+    const u = localStorage.getItem('smart_cctv_user');
+    return u ? JSON.parse(u) : null;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const ws = useWebSocket();
+  const ws = useWebSocket(token);
   const location = useLocation();
+
+  const handleLoginSuccess = (newToken, newUser) => {
+    setToken(newToken);
+    setUser(newUser);
+  };
+
+  const handleLogout = () => {
+    if (confirm('Đăng xuất khỏi hệ thống?')) {
+      localStorage.removeItem('smart_cctv_token');
+      localStorage.removeItem('smart_cctv_user');
+      setToken('');
+      setUser(null);
+    }
+  };
+
+  if (!token) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
 
   const navItems = [
     { path: '/', icon: LayoutGrid, label: 'Dashboard' },
@@ -63,6 +87,29 @@ export default function App() {
                 {item.label}
               </NavLink>
             ))}
+            <button
+              onClick={handleLogout}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                color: 'var(--danger)',
+                background: 'none',
+                border: 'none',
+                width: '100%',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: '0.9rem',
+                borderRadius: 'var(--radius-sm)',
+                marginTop: 'auto',
+                transition: 'all var(--transition-fast)'
+              }}
+            >
+              <LogOut className="nav-icon" size={18} />
+              Đăng xuất
+            </button>
           </nav>
 
           <div className="sidebar-footer">

@@ -4,3 +4,4 @@
 /web/package-lock.json
 .idea
 /server/data/
+/.env

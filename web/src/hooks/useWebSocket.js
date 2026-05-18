@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-export function useWebSocket() {
+export function useWebSocket(token) {
   const [connected, setConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState(null);
   const wsRef = useRef(null);
   const listenersRef = useRef(new Map());
 
   useEffect(() => {
+    if (!token) {
+      setConnected(false);
+      return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
 
     function connect() {
       const ws = new WebSocket(wsUrl);
@@ -17,7 +22,10 @@ export function useWebSocket() {
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
         setConnected(false);
-        setTimeout(connect, 3000); // Reconnect
+        // Only reconnect if token is still valid/active
+        if (localStorage.getItem('smart_cctv_token')) {
+          setTimeout(connect, 3000); // Reconnect
+        }
       };
       ws.onerror = () => ws.close();
       ws.onmessage = (msg) => {
@@ -38,7 +46,7 @@ export function useWebSocket() {
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, []);
+  }, [token]);
 
   const on = useCallback((type, callback) => {
     if (!listenersRef.current.has(type)) {

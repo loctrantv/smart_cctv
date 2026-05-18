@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getFaces, addFace, deleteFace } from '../utils/api';
+import { getFaces, addFace, deleteFace, getMediaUrl } from '../utils/api';
 import { Users, Plus, Trash2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -47,7 +47,7 @@ export default function FaceLibrary() {
             <div key={face.id} className="card" id={`face-${face.id}`}>
               <div style={{ aspectRatio: '1', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {face.photo_path ? (
-                  <img src={`/media/snapshots/${face.photo_path}`} alt={face.name}
+                  <img src={getMediaUrl(`snapshots/${face.photo_path}`)} alt={face.name}
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   <Users size={40} style={{ color: 'var(--text-muted)' }} />

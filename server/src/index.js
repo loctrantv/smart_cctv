@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const http = require('http');
 
 const { initDatabase } = require('./db/schema');
+const authRouter = require('./routes/auth');
 const camerasRouter = require('./routes/cameras');
 const recordingsRouter = require('./routes/recordings');
 const eventsRouter = require('./routes/events');
@@ -15,6 +16,9 @@ const RecordingManager = require('./services/recording-manager');
 const StorageManager = require('./services/storage-manager');
 const DetectionWorker = require('./services/detection-worker');
 const Go2RTCClient = require('./services/go2rtc-client');
+const authMiddleware = require('./middleware/auth');
+const { verifyToken } = require('./utils/auth');
+const url = require('url');
 
 // ============================================
 // Configuration
@@ -43,7 +47,20 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 const wsClients = new Set();
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Validate token from query string
+  try {
+    const parameters = url.parse(req.url, true).query;
+    const token = parameters.token;
+    if (!token || !verifyToken(token)) {
+      ws.close(4001, 'Unauthorized');
+      return;
+    }
+  } catch (err) {
+    ws.close(4002, 'Auth Error');
+    return;
+  }
+
   wsClients.add(ws);
   console.log(`[WS] Client connected. Total: ${wsClients.size}`);
 
@@ -78,9 +95,9 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve snapshots and recordings statically
-app.use('/media/snapshots', express.static(SNAPSHOTS_PATH));
-app.use('/media/recordings', express.static(RECORDINGS_PATH));
+// Serve snapshots and recordings statically (protected by auth)
+app.use('/media/snapshots', authMiddleware, express.static(SNAPSHOTS_PATH));
+app.use('/media/recordings', authMiddleware, express.static(RECORDINGS_PATH));
 
 // Inject dependencies into request
 app.use((req, res, next) => {
@@ -97,11 +114,12 @@ app.use((req, res, next) => {
 // ============================================
 // Routes
 // ============================================
-app.use('/api/cameras', camerasRouter);
-app.use('/api/recordings', recordingsRouter);
-app.use('/api/events', eventsRouter);
-app.use('/api/faces', facesRouter);
-app.use('/api/system', systemRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/cameras', authMiddleware, camerasRouter);
+app.use('/api/recordings', authMiddleware, recordingsRouter);
+app.use('/api/events', authMiddleware, eventsRouter);
+app.use('/api/faces', authMiddleware, facesRouter);
+app.use('/api/system', authMiddleware, systemRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

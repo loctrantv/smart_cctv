@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getEvents, getCameras } from '../utils/api';
+import { getEvents, getCameras, getMediaUrl } from '../utils/api';
 import { format } from 'date-fns';
 import { AlertTriangle, User, ScanFace, Activity, Filter } from 'lucide-react';
 import { useApp } from '../App';
@@ -76,7 +76,7 @@ export default function Events() {
               <div key={evt.id} className="event-card" id={`event-${evt.id}`}>
                 <div className="event-thumbnail">
                   {evt.snapshot_path ? (
-                    <img src={`/media/snapshots/${evt.snapshot_path}`} alt="snapshot" loading="lazy" />
+                    <img src={getMediaUrl(`snapshots/${evt.snapshot_path}`)} alt="snapshot" loading="lazy" />
                   ) : (
                     <div className="video-placeholder" style={{ height: '100%' }}>
                       <Icon size={20} />
