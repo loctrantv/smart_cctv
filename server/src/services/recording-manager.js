@@ -53,6 +53,7 @@ class RecordingManager {
       fullPath,
     ];
     
+    const startTime = Date.now();
     const proc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
     
     proc.stderr.on('data', (data) => {
@@ -78,7 +79,22 @@ class RecordingManager {
       if (this.processes.has(camera.id)) {
         const info = this.processes.get(camera.id);
         if (!info.stopping) {
-          this._spawnSegment(camera);
+          const elapsed = Date.now() - startTime;
+          if (elapsed < 10000) {
+            console.warn(`[REC] FFmpeg process for ${camera.name} exited too quickly (${Math.round(elapsed/1000)}s). Retrying in 10s to avoid spamming...`);
+            setTimeout(() => {
+              if (this.processes.has(camera.id)) {
+                const currentInfo = this.processes.get(camera.id);
+                if (!currentInfo.stopping) {
+                  this._spawnSegment(camera);
+                } else {
+                  this.processes.delete(camera.id);
+                }
+              }
+            }, 10000);
+          } else {
+            this._spawnSegment(camera);
+          }
         } else {
           this.processes.delete(camera.id);
         }
