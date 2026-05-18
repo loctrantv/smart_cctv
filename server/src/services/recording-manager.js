@@ -67,10 +67,11 @@ class RecordingManager {
       // Finalize recording in DB
       try {
         const stats = fs.existsSync(fullPath) ? fs.statSync(fullPath) : { size: 0 };
+        const duration = Math.round((Date.now() - startTime) / 1000);
         this.db.prepare(`
           UPDATE recordings SET end_time = datetime('now'), duration_seconds = ?,
             size_bytes = ?, status = 'completed' WHERE id = ?
-        `).run(segmentMinutes * 60, stats.size, recordingId);
+        `).run(duration, stats.size, recordingId);
       } catch (e) { console.error('[REC] DB update error:', e.message); }
       
       this.broadcast({ type: 'recording_completed', cameraId: camera.id, recordingId });

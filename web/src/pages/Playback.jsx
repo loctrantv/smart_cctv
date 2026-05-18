@@ -61,6 +61,34 @@ export default function Playback() {
     }
   };
 
+  const parseUTCDate = (str) => {
+    if (!str) return new Date();
+    const iso = str.includes('Z') || str.includes('+') ? str : str.replace(' ', 'T') + 'Z';
+    return new Date(iso);
+  };
+
+  const formatTimeLocal = (utcString) => {
+    if (!utcString) return '';
+    let isoString = utcString;
+    if (!utcString.includes('Z') && !utcString.includes('+')) {
+      isoString = utcString.replace(' ', 'T') + 'Z';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    } catch {
+      return utcString;
+    }
+  };
+
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0s';
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs > 0 ? `${mins}ph ${secs}s` : `${mins} phút`;
+  };
+
   const changeSpeed = () => {
     const speeds = [0.5, 1, 2, 4, 8, 16];
     const idx = speeds.indexOf(speed);
@@ -79,15 +107,15 @@ export default function Playback() {
   const timelineSegments = useCallback(() => {
     const segments = [];
     timeline.recordings.forEach(rec => {
-      const start = new Date(rec.start_time);
-      const end = rec.end_time ? new Date(rec.end_time) : new Date(start.getTime() + (rec.duration_seconds || 900) * 1000);
+      const start = parseUTCDate(rec.start_time);
+      const end = rec.end_time ? parseUTCDate(rec.end_time) : new Date(start.getTime() + (rec.duration_seconds || 900) * 1000);
       const dayStart = new Date(selectedDate + 'T00:00:00');
       const startPct = Math.max(0, (start - dayStart) / 86400000) * 100;
       const widthPct = Math.max(0.5, ((end - start) / 86400000) * 100);
       segments.push({ type: 'recording', left: startPct, width: widthPct, rec });
     });
     timeline.events.forEach(evt => {
-      const time = new Date(evt.timestamp);
+      const time = parseUTCDate(evt.timestamp);
       const dayStart = new Date(selectedDate + 'T00:00:00');
       const pct = ((time - dayStart) / 86400000) * 100;
       segments.push({ type: 'event', left: pct, width: 0.3, evt });
@@ -219,7 +247,16 @@ export default function Playback() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {timeline.recordings.map(rec => (
+              {[...timeline.recordings]
+                .sort((a, b) => {
+                  const getMs = (str) => {
+                    if (!str) return 0;
+                    const iso = str.includes('Z') || str.includes('+') ? str : str.replace(' ', 'T') + 'Z';
+                    return new Date(iso).getTime();
+                  };
+                  return getMs(b.start_time) - getMs(a.start_time);
+                })
+                .map(rec => (
                 <div
                   key={rec.id}
                   className="card"
@@ -231,10 +268,10 @@ export default function Playback() {
                       <div className="flex items-center gap-3">
                         <Play size={14} style={{ color: 'var(--accent)' }} />
                         <span className="text-mono text-sm">
-                          {rec.start_time?.split('T')[1]?.slice(0, 8) || rec.start_time}
+                          {formatTimeLocal(rec.start_time)}
                         </span>
                         <span className="text-muted text-xs">
-                          {Math.round((rec.duration_seconds || 0) / 60)} phút
+                          {formatDuration(rec.duration_seconds)}
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
