@@ -22,11 +22,29 @@ class RecordingManager {
       return;
     }
     console.log(`[REC] Starting recording for: ${camera.name}`);
-    this._spawnSegment(camera);
+    this._spawnSegment(camera, null, 'continuous');
+  }
+
+  startMotionRecording(camera, durationSeconds = 30) {
+    if (this.processes.has(camera.id)) {
+      return; // Already recording (either continuous or active motion segment)
+    }
+    console.log(`[REC] Starting motion recording for: ${camera.name} (${durationSeconds}s)`);
+    this._spawnSegment(camera, durationSeconds, 'motion');
   }
   
-  _spawnSegment(camera) {
-    const segmentMinutes = 15;
+  _spawnSegment(camera, durationSeconds, mode = 'continuous') {
+    let segmentDuration = durationSeconds;
+    if (!segmentDuration) {
+      try {
+        const segRow = this.db.prepare("SELECT value FROM settings WHERE key = 'recording.segment_minutes'").get();
+        const segmentMinutes = segRow ? parseInt(segRow.value) : 15;
+        segmentDuration = segmentMinutes * 60;
+      } catch {
+        segmentDuration = 15 * 60;
+      }
+    }
+
     const cameraDir = path.join(this.recordingsPath, camera.id);
     fs.mkdirSync(cameraDir, { recursive: true });
     
@@ -49,7 +67,7 @@ class RecordingManager {
       '-c:v', 'copy',             // copy H.265 không re-encode
       '-c:a', 'aac',              // PCM ALAW → AAC (giống Python đang chạy)
       '-movflags', '+faststart',  // giống Python đang chạy
-      '-t', String(segmentMinutes * 60),
+      '-t', String(segmentDuration),
       fullPath,
     ];
     
@@ -76,27 +94,32 @@ class RecordingManager {
       
       this.broadcast({ type: 'recording_completed', cameraId: camera.id, recordingId });
       
-      // If still tracking this camera, start next segment
+      // If still tracking this camera, start next segment (for continuous mode only)
       if (this.processes.has(camera.id)) {
         const info = this.processes.get(camera.id);
-        if (!info.stopping) {
-          const elapsed = Date.now() - startTime;
-          if (elapsed < 10000) {
-            console.warn(`[REC] FFmpeg process for ${camera.name} exited too quickly (${Math.round(elapsed/1000)}s). Retrying in 10s to avoid spamming...`);
-            setTimeout(() => {
-              if (this.processes.has(camera.id)) {
-                const currentInfo = this.processes.get(camera.id);
-                if (!currentInfo.stopping) {
-                  this._spawnSegment(camera);
-                } else {
-                  this.processes.delete(camera.id);
+        if (info.mode === 'continuous') {
+          if (!info.stopping) {
+            const elapsed = Date.now() - startTime;
+            if (elapsed < 10000) {
+              console.warn(`[REC] FFmpeg process for ${camera.name} exited too quickly (${Math.round(elapsed/1000)}s). Retrying in 10s to avoid spamming...`);
+              setTimeout(() => {
+                if (this.processes.has(camera.id)) {
+                  const currentInfo = this.processes.get(camera.id);
+                  if (!currentInfo.stopping) {
+                    this._spawnSegment(camera, null, 'continuous');
+                  } else {
+                    this.processes.delete(camera.id);
+                  }
                 }
-              }
-            }, 10000);
+              }, 10000);
+            } else {
+              this._spawnSegment(camera, null, 'continuous');
+            }
           } else {
-            this._spawnSegment(camera);
+            this.processes.delete(camera.id);
           }
         } else {
+          // Motion recording completed
           this.processes.delete(camera.id);
         }
       }
@@ -107,7 +130,7 @@ class RecordingManager {
       this.processes.delete(camera.id);
     });
     
-    this.processes.set(camera.id, { process: proc, recordingId, stopping: false });
+    this.processes.set(camera.id, { process: proc, recordingId, stopping: false, mode });
     this.broadcast({ type: 'recording_started', cameraId: camera.id, recordingId });
   }
   

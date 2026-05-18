@@ -125,7 +125,7 @@ export default function SettingsPage() {
       {activeTab === 'detection' && (
         <div className="card">
           <div className="card-header">
-            <span className="font-bold flex items-center gap-2"><SettingsIcon size={16} /> Phát hiện</span>
+            <span className="font-bold flex items-center gap-2"><SettingsIcon size={16} /> Phát hiện & Ghi hình</span>
           </div>
           <div className="card-body">
             <div className="form-group">
@@ -134,11 +134,38 @@ export default function SettingsPage() {
                 onChange={e => setSettings({ ...settings, 'detection.interval_ms': e.target.value })} />
               <div className="text-xs text-muted mt-2">Giá trị nhỏ = phát hiện nhanh hơn nhưng tốn CPU hơn</div>
             </div>
-            <div className="form-group">
+            <div className="form-group mt-3">
               <label className="form-label">Ngưỡng tin cậy (0-1)</label>
               <input className="form-input" type="number" step="0.1" min="0" max="1"
                 value={settings['detection.confidence_threshold'] || '0.5'}
                 onChange={e => setSettings({ ...settings, 'detection.confidence_threshold': e.target.value })} />
+            </div>
+
+            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border-color, rgba(255,255,255,0.1))' }} />
+
+            <div className="form-group">
+              <label className="form-label">Quay phim khi phát hiện chuyển động</label>
+              <select 
+                className="form-input" 
+                value={settings['recording.on_motion_enabled'] || '0'}
+                onChange={e => setSettings({ ...settings, 'recording.on_motion_enabled': e.target.value })}
+              >
+                <option value="0">Tắt (Chỉ chụp ảnh sự kiện)</option>
+                <option value="1">Bật (Tự động quay video khi có chuyển động)</option>
+              </select>
+            </div>
+            
+            <div className="form-group mt-3">
+              <label className="form-label">Thời lượng quay khi có chuyển động (giây)</label>
+              <input 
+                className="form-input" 
+                type="number" 
+                min="5" 
+                max="300"
+                value={settings['recording.on_motion_duration'] || '30'}
+                onChange={e => setSettings({ ...settings, 'recording.on_motion_duration': e.target.value })} 
+              />
+              <div className="text-xs text-muted mt-2">Thời gian quay video tự động sau mỗi lần phát hiện chuyển động (từ 5 đến 300 giây)</div>
             </div>
           </div>
         </div>

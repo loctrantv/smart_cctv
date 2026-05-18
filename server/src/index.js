@@ -86,7 +86,7 @@ function broadcast(event) {
 const go2rtcClient = new Go2RTCClient(GO2RTC_URL);
 const recordingManager = new RecordingManager(db, RECORDINGS_PATH, broadcast, GO2RTC_RTSP_URL); // thêm GO2RTC_RTSP_URL
 const storageManager = new StorageManager(db, RECORDINGS_PATH, SNAPSHOTS_PATH);
-const detectionWorker = new DetectionWorker(db, SNAPSHOTS_PATH, go2rtcClient, broadcast, GO2RTC_RTSP_URL); // thêm GO2RTC_RTSP_URL
+const detectionWorker = new DetectionWorker(db, SNAPSHOTS_PATH, go2rtcClient, broadcast, GO2RTC_RTSP_URL, recordingManager);
 
 // ============================================
 // Middleware

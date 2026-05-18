@@ -13,6 +13,7 @@ export default function Events() {
   const [total, setTotal] = useState(0);
   const [filters, setFilters] = useState({ camera_id: '', type: '', limit: 50 });
   const [loading, setLoading] = useState(true);
+  const [zoomImage, setZoomImage] = useState(null);
   const { ws } = useApp();
 
   const fetchEvents = async () => {
@@ -86,7 +87,16 @@ export default function Events() {
               <div key={evt.id} className="event-card" id={`event-${evt.id}`}>
                 <div className="event-thumbnail">
                   {evt.snapshot_path ? (
-                    <img src={getMediaUrl(`snapshots/${evt.snapshot_path}`)} alt="snapshot" loading="lazy" />
+                    <img 
+                      src={getMediaUrl(`snapshots/${evt.snapshot_path}`)} 
+                      alt="snapshot" 
+                      loading="lazy" 
+                      style={{ cursor: 'zoom-in' }}
+                      onClick={() => setZoomImage({
+                        src: getMediaUrl(`snapshots/${evt.snapshot_path}`),
+                        title: `${typeLabels[evt.type] || evt.type} - ${evt.camera_name} (${evt.timestamp ? format(new Date(evt.timestamp), 'HH:mm:ss dd/MM/yyyy') : ''})`
+                      })}
+                    />
                   ) : (
                     <div className="video-placeholder" style={{ height: '100%' }}>
                       <Icon size={20} />
@@ -147,6 +157,114 @@ export default function Events() {
           </button>
         </div>
       )}
+      {zoomImage && (
+        <ImageZoomModal 
+          src={zoomImage.src} 
+          title={zoomImage.title} 
+          onClose={() => setZoomImage(null)} 
+        />
+      )}
+    </div>
+  );
+}
+
+export function ImageZoomModal({ src, title, onClose }) {
+  return (
+    <div 
+      className="modal-overlay" 
+      onClick={onClose}
+      style={{
+        zIndex: 9999,
+        background: 'rgba(0, 0, 0, 0.85)',
+        backdropFilter: 'blur(10px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'zoom-out',
+        animation: 'modalFadeIn 0.2s ease-out'
+      }}
+    >
+      <style>{`
+        @keyframes modalFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes modalScaleUp {
+          from { transform: scale(0.9); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
+      <div 
+        style={{
+          position: 'relative',
+          maxWidth: '90%',
+          maxHeight: '90%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'default',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <button 
+          onClick={onClose}
+          className="btn-icon" 
+          style={{
+            position: 'absolute',
+            top: -45,
+            right: 0,
+            color: '#fff',
+            fontSize: '1.25rem',
+            background: 'rgba(255, 255, 255, 0.1)',
+            backdropFilter: 'blur(5px)',
+            borderRadius: '50%',
+            width: 32,
+            height: 32,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            cursor: 'pointer',
+            transition: 'background 0.2s'
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+        >
+          ✕
+        </button>
+        <img 
+          src={src} 
+          alt={title || "Zoomed"} 
+          style={{
+            maxWidth: '100%',
+            maxHeight: '80vh',
+            borderRadius: '12px',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            objectFit: 'contain',
+            animation: 'modalScaleUp 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          }} 
+        />
+        {title && (
+          <div 
+            style={{
+              marginTop: 16,
+              color: '#fff',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              textAlign: 'center',
+              textShadow: '0 2px 4px rgba(0,0,0,0.5)',
+              background: 'rgba(0,0,0,0.4)',
+              padding: '6px 16px',
+              borderRadius: '20px',
+              border: '1px solid rgba(255,255,255,0.05)',
+              backdropFilter: 'blur(5px)'
+            }}
+          >
+            {title}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -130,6 +130,8 @@ function initDatabase(dbPath) {
     'detection.person_enabled': '1',
     'detection.face_enabled': '1',
     'recording.segment_minutes': '15',
+    'recording.on_motion_enabled': '0',
+    'recording.on_motion_duration': '30',
     'system.timezone': 'Asia/Ho_Chi_Minh',
   };
 

@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { getFaces, addFace, deleteFace, getMediaUrl } from '../utils/api';
 import { Users, Plus, Trash2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
+import { ImageZoomModal } from './Events';
 
 export default function FaceLibrary() {
   const [faces, setFaces] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [zoomImage, setZoomImage] = useState(null);
 
   const fetchFaces = async () => {
     try {
@@ -47,8 +49,15 @@ export default function FaceLibrary() {
             <div key={face.id} className="card" id={`face-${face.id}`}>
               <div style={{ aspectRatio: '1', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {face.photo_path ? (
-                  <img src={getMediaUrl(`snapshots/${face.photo_path}`)} alt={face.name}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img 
+                    src={getMediaUrl(`snapshots/${face.photo_path}`)} 
+                    alt={face.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
+                    onClick={() => setZoomImage({
+                      src: getMediaUrl(`snapshots/${face.photo_path}`),
+                      title: `Khuôn mặt: ${face.name}`
+                    })}
+                  />
                 ) : (
                   <Users size={40} style={{ color: 'var(--text-muted)' }} />
                 )}
@@ -74,6 +83,13 @@ export default function FaceLibrary() {
       )}
 
       {showAdd && <AddFaceModal onClose={() => setShowAdd(false)} onAdded={fetchFaces} />}
+      {zoomImage && (
+        <ImageZoomModal 
+          src={zoomImage.src} 
+          title={zoomImage.title} 
+          onClose={() => setZoomImage(null)} 
+        />
+      )}
     </div>
   );
 }

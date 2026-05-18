@@ -9,12 +9,13 @@ const { v4: uuidv4 } = require('uuid');
  * For full AI detection, this can be extended with ONNX Runtime
  */
 class DetectionWorker {
-  constructor(db, snapshotsPath, go2rtcClient, broadcast, go2rtcRtspUrl) {
+  constructor(db, snapshotsPath, go2rtcClient, broadcast, go2rtcRtspUrl, recordingManager) {
     this.db = db;
     this.snapshotsPath = snapshotsPath;
     this.go2rtcClient = go2rtcClient;
     this.go2rtcRtspUrl = go2rtcRtspUrl || 'rtsp://localhost:8554';
     this.broadcast = broadcast;
+    this.recordingManager = recordingManager;
     this.workers = new Map(); // cameraId -> { interval, lastHash }
     this.intervalMs = parseInt(process.env.DETECTION_INTERVAL_MS || '3000');
   }
@@ -86,6 +87,7 @@ class DetectionWorker {
         const diff = Math.abs(currentSize - lastFrame) / lastFrame;
         if (diff > 0.15) { // >15% size change suggests significant change
           this._createEvent(camera, snapPath, path.join(camera.id, snapName), 'motion', 'motion_detected', diff);
+          this._triggerMotionRecording(camera);
         } else {
           // No significant change, clean up snapshot
           fs.unlinkSync(snapPath);
@@ -165,6 +167,23 @@ class DetectionWorker {
     const event = { id, camera_id: camera.id, camera_name: camera.name, type, label, confidence, timestamp, snapshot_path: relativeSnapPath };
     this.broadcast({ type: 'detection_event', event });
     console.log(`[DET] ${camera.name}: ${label} (${(confidence * 100).toFixed(1)}%)`);
+  }
+
+  _triggerMotionRecording(camera) {
+    if (!this.recordingManager) return;
+    try {
+      const enabledRow = this.db.prepare("SELECT value FROM settings WHERE key = 'recording.on_motion_enabled'").get();
+      const onMotionEnabled = enabledRow ? enabledRow.value === '1' : false;
+      
+      if (onMotionEnabled) {
+        const durationRow = this.db.prepare("SELECT value FROM settings WHERE key = 'recording.on_motion_duration'").get();
+        const duration = durationRow ? parseInt(durationRow.value) : 30;
+        
+        this.recordingManager.startMotionRecording(camera, duration);
+      }
+    } catch (err) {
+      console.error('[DET] Failed to trigger motion recording:', err.message);
+    }
   }
 
   _cleanupSnapshots(dir, maxFiles) {
