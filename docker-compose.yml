@@ -44,19 +44,3 @@ services:
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
     depends_on:
       - go2rtc
-
-  # ============================================
-  # Web Frontend - Nginx + React Build
-  # ============================================
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    container_name: smart_cctv_web
-    restart: unless-stopped
-    ports:
-      - "8081:80"
-    depends_on:
-      - api
-    environment:
-      - TZ=${TZ:-Asia/Ho_Chi_Minh}
