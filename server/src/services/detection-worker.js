@@ -40,7 +40,7 @@ class DetectionWorker {
       }, this.intervalMs);
     };
     
-    this.workers.set(camera.id, { timer: null, lastFrame: null, stopped: false });
+    this.workers.set(camera.id, { timer: null, stopped: false });
     scheduleNext();
   }
   
@@ -107,26 +107,24 @@ class DetectionWorker {
         return; // Too small, probably error frame
       }
 
-      // Basic frame difference detection (lightweight)
+      // Check if the snapshot contains a red box (bounding box)
       const worker = this.workers.get(camera.id);
       if (!worker) return;
 
-      const currentSize = stats.size;
-      const lastFrame = worker.lastFrame;
+      const hasRedBox = await this._detectRedBox(snapPath);
 
-      // Simple heuristic: significant file size change suggests motion
-      if (lastFrame) {
-        const diff = Math.abs(currentSize - lastFrame) / lastFrame;
-        if (diff > 0.15) { // >15% size change suggests significant change
-          this._createEvent(camera, snapPath, path.join(camera.id, snapName), 'motion', 'motion_detected', diff);
-          this._triggerMotionRecording(camera);
-        } else {
-          // No significant change, clean up snapshot
+      if (hasRedBox) {
+        // Red box detected, create event and trigger recording
+        this._createEvent(camera, snapPath, path.join(camera.id, snapName), 'motion', 'motion_detected', 1.0);
+        this._triggerMotionRecording(camera);
+      } else {
+        // No red box detected, clean up snapshot
+        try {
           fs.unlinkSync(snapPath);
+        } catch (e) {
+          // Ignore unlink errors
         }
       }
-
-      worker.lastFrame = currentSize;
 
       // Keep only last 100 snapshots per camera
       this._cleanupSnapshots(snapDir, 100);
@@ -231,6 +229,174 @@ class DetectionWorker {
     } catch (err) {
       console.error('[DET] Failed to trigger motion recording:', err.message);
     }
+  }
+
+  _detectRedBox(snapPath) {
+    return new Promise((resolve) => {
+      const width = 640;
+      const height = 360;
+      const expectedBytes = width * height * 3;
+      
+      const args = [
+        '-y',
+        '-i', snapPath,
+        '-vf', 'scale=640:360',
+        '-f', 'rawvideo',
+        '-pix_fmt', 'rgb24',
+        '-'
+      ];
+      
+      const proc = spawn('ffmpeg', args);
+      const chunks = [];
+      
+      proc.stdout.on('data', (chunk) => {
+        chunks.push(chunk);
+      });
+      
+      proc.stderr?.resume(); // Drain stderr to prevent process blocking
+      
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          resolve(false);
+          return;
+        }
+        
+        const buffer = Buffer.concat(chunks);
+        if (buffer.length !== expectedBytes) {
+          resolve(false);
+          return;
+        }
+        
+        const detected = this._analyzeRgbBuffer(buffer, width, height);
+        resolve(detected);
+      });
+      
+      proc.on('error', () => {
+        resolve(false);
+      });
+    });
+  }
+
+  _analyzeRgbBuffer(buffer, width, height) {
+    const numPixels = width * height;
+    const isRedPixel = new Uint8Array(numPixels);
+    const redPixels = [];
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        const r = buffer[3 * idx];
+        const g = buffer[3 * idx + 1];
+        const b = buffer[3 * idx + 2];
+        
+        // Match bright red color:
+        // R is high, G and B are low. R should be significantly greater than G and B.
+        if (r > 150 && g < 80 && b < 80 && (r - g) > 80 && (r - b) > 80) {
+          isRedPixel[idx] = 1;
+          redPixels.push({ x, y });
+        }
+      }
+    }
+    
+    if (redPixels.length < 20) {
+      return false;
+    }
+    
+    const visited = new Uint8Array(numPixels);
+    const clusters = [];
+    
+    for (const p of redPixels) {
+      const startIdx = p.y * width + p.x;
+      if (visited[startIdx]) continue;
+      
+      const cluster = [];
+      const queue = [p];
+      visited[startIdx] = 1;
+      
+      let head = 0;
+      while (head < queue.length) {
+        const curr = queue[head++];
+        cluster.push(curr);
+        
+        // 8-connected BFS search with a radius of 2 to bridge gaps
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = curr.x + dx;
+            const ny = curr.y + dy;
+            
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+              const nidx = ny * width + nx;
+              if (isRedPixel[nidx] && !visited[nidx]) {
+                visited[nidx] = 1;
+                queue.push({ x: nx, y: ny });
+              }
+            }
+          }
+        }
+      }
+      
+      if (cluster.length >= 30) {
+        clusters.push(cluster);
+      }
+    }
+    
+    for (const cluster of clusters) {
+      let minX = width;
+      let maxX = 0;
+      let minY = height;
+      let maxY = 0;
+      
+      for (const p of cluster) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      
+      const w = maxX - minX;
+      const h = maxY - minY;
+      
+      // Bounding box size constraints
+      if (w >= 20 && h >= 20 && w <= 620 && h <= 340) {
+        let borderCount = 0;
+        let innerCount = 0;
+        const borderTolerance = 5;
+        
+        for (const p of cluster) {
+          const distToLeft = p.x - minX;
+          const distToRight = maxX - p.x;
+          const distToTop = p.y - minY;
+          const distToBottom = maxY - p.y;
+          
+          const nearBorder = (distToLeft <= borderTolerance) || 
+                             (distToRight <= borderTolerance) || 
+                             (distToTop <= borderTolerance) || 
+                             (distToBottom <= borderTolerance);
+                             
+          if (nearBorder) {
+            borderCount++;
+          } else {
+            innerCount++;
+          }
+        }
+        
+        const total = cluster.length;
+        const innerRatio = innerCount / total;
+        const perimeter = 2 * (w + h);
+        const coverage = borderCount / perimeter;
+        
+        // hollow outline constraints:
+        // 1. innerRatio should be low (< 0.3)
+        // 2. coverage should be reasonable (> 0.15)
+        if (innerRatio < 0.3 && coverage > 0.15) {
+          console.log(`[DET] Detected red box: bounds=[${minX}, ${minY}, ${maxX}, ${maxY}], size=${w}x${h}, innerRatio=${innerRatio.toFixed(2)}, coverage=${coverage.toFixed(2)}`);
+          return true;
+        }
+      }
+    }
+    
+    return false;
   }
 
   _cleanupSnapshots(dir, maxFiles) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getEvents, getCameras, getMediaUrl, deleteEvent } from '../utils/api';
+import { getEvents, getCameras, getMediaUrl, deleteEvent, deleteEvents } from '../utils/api';
 import { format } from 'date-fns';
 import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2 } from 'lucide-react';
 import { useApp } from '../App';
@@ -14,6 +14,7 @@ export default function Events() {
   const [filters, setFilters] = useState({ camera_id: '', type: '', limit: 50 });
   const [loading, setLoading] = useState(true);
   const [zoomImage, setZoomImage] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const { ws } = useApp();
 
   const fetchEvents = async () => {
@@ -26,6 +27,7 @@ export default function Events() {
       const data = await getEvents(params);
       setEvents(data.events);
       setTotal(data.total);
+      setSelectedIds(new Set()); // Reset selections on filter change / refresh
     } catch (err) {
       console.error(err);
     } finally {
@@ -43,6 +45,53 @@ export default function Events() {
     }
   };
 
+  const handleToggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const allSelected = events.length > 0 && events.every(evt => selectedIds.has(evt.id));
+
+  const handleToggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        events.forEach(evt => next.delete(evt.id));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        events.forEach(evt => next.add(evt.id));
+        return next;
+      });
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+
+    if (!confirm(`Bạn có chắc chắn muốn xóa ${count} sự kiện đã chọn? Ảnh chụp của các sự kiện này sẽ bị xóa vĩnh viễn.`)) {
+      return;
+    }
+
+    try {
+      await deleteEvents(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      fetchEvents();
+    } catch (err) {
+      alert('Không thể xóa các sự kiện: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   useEffect(() => { getCameras().then(setCameras); }, []);
   useEffect(() => { fetchEvents(); }, [filters]);
 
@@ -53,9 +102,9 @@ export default function Events() {
 
   return (
     <div>
-      {/* Filters */}
-      <div className="toolbar">
-        <div className="toolbar-group">
+      {/* Filters & Bulk Actions Toolbar */}
+      <div className="toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+        <div className="toolbar-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Filter size={16} className="text-muted" />
           <select className="form-select" style={{ width: 160 }}
             value={filters.camera_id} onChange={e => setFilters({ ...filters, camera_id: e.target.value })}>
@@ -70,6 +119,42 @@ export default function Events() {
             <option value="motion">Chuyển động</option>
           </select>
         </div>
+
+        {events.length > 0 && (
+          <div className="toolbar-group" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.875rem', userSelect: 'none' }}>
+              <input 
+                type="checkbox" 
+                checked={allSelected} 
+                onChange={handleToggleSelectAll}
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              <span>Chọn tất cả ({events.length})</span>
+            </label>
+            {selectedIds.size > 0 && (
+              <button 
+                onClick={handleBulkDelete}
+                className="btn btn-danger"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  fontSize: '0.875rem',
+                  borderRadius: '6px',
+                  background: 'var(--danger)',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <Trash2 size={14} />
+                Xóa {selectedIds.size} đã chọn
+              </button>
+            )}
+          </div>
+        )}
+        
         <span className="text-xs text-muted">{total} sự kiện</span>
       </div>
 
@@ -84,7 +169,15 @@ export default function Events() {
           {events.map(evt => {
             const Icon = typeIcons[evt.type] || Activity;
             return (
-              <div key={evt.id} className="event-card" id={`event-${evt.id}`}>
+              <div key={evt.id} className="event-card" id={`event-${evt.id}`} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ paddingLeft: '8px', display: 'flex', alignItems: 'center' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedIds.has(evt.id)}
+                    onChange={() => handleToggleSelect(evt.id)}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                </div>
                 <div className="event-thumbnail">
                   {evt.snapshot_path ? (
                     <img 

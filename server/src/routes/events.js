@@ -144,26 +144,33 @@ router.delete('/:id', (req, res) => {
   }
 });
 
-// DELETE /api/events - Bulk delete events
+// DELETE /api/events - Bulk delete events (by query filter or list of IDs)
 router.delete('/', (req, res) => {
   try {
+    const { ids } = req.body || {};
     const { before, camera_id } = req.query;
 
     let where = [];
     let params = [];
 
-    if (before) {
-      where.push('timestamp < ?');
-      params.push(before);
-    }
+    if (Array.isArray(ids) && ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',');
+      where.push(`id IN (${placeholders})`);
+      params.push(...ids);
+    } else {
+      if (before) {
+        where.push('timestamp < ?');
+        params.push(before);
+      }
 
-    if (camera_id) {
-      where.push('camera_id = ?');
-      params.push(camera_id);
+      if (camera_id) {
+        where.push('camera_id = ?');
+        params.push(camera_id);
+      }
     }
 
     if (where.length === 0) {
-      return res.status(400).json({ error: 'Specify at least one filter (before, camera_id)' });
+      return res.status(400).json({ error: 'Specify at least one filter (ids, before, camera_id)' });
     }
 
     // Find all events to delete their physical snapshot files first

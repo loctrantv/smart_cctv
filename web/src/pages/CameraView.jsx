@@ -201,7 +201,7 @@ export default function CameraView() {
         )}
         
         {/* All Active Detection Zones Overlays */}
-        {(zones.length > 0) && zones.map((z, idx) => (
+        {showZoneConfig && (zones.length > 0) && zones.map((z, idx) => (
           <div 
             key={idx} 
             style={{
