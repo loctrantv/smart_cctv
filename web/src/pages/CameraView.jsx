@@ -389,10 +389,6 @@ export default function CameraView() {
                   <div className="text-sm text-mono">{camera.stream_id}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted mb-2">RTSP URL</div>
-                  <div className="text-sm text-mono truncate">{camera.rtsp_url}</div>
-                </div>
-                <div>
                   <div className="text-xs text-muted mb-2">Trạng thái</div>
                   <div className="flex items-center gap-2">
                     <div className={`status-dot ${camera.enabled ? '' : 'offline'}`} />

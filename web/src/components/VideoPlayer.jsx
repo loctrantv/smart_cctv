@@ -179,6 +179,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
   }
 
   return (
+    
     <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
       <video
         ref={videoRef}

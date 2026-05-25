@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'https://camera.tranhtuongtravinh.com',
         changeOrigin: true,
       },
       '/ws': {
@@ -15,7 +15,7 @@ export default defineConfig({
         ws: true,
       },
       '/media': {
-        target: 'http://localhost:3001',
+        target: 'https://camera.tranhtuongtravinh.com',
         changeOrigin: true,
       },
     },
