@@ -124,11 +124,7 @@ export default function CameraView() {
     setCamera(updated);
   };
 
-  const handleDelete = async () => {
-    if (!confirm('Xóa camera này? Tất cả recordings và events sẽ bị xóa.')) return;
-    await deleteCamera(camera.id);
-    navigate('/');
-  };
+
 
   if (loading || !camera) {
     return <div className="empty-state"><p>Đang tải...</p></div>;
@@ -136,19 +132,22 @@ export default function CameraView() {
 
   return (
     <div>
-      {/* Back + Title */}
-      <div className="toolbar">
-        <div className="toolbar-group">
-          <button className="btn btn-secondary" onClick={() => navigate('/')}>
-            <ArrowLeft size={16} /> Quay lại
-          </button>
-          <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{camera.name}</h2>
-          {camera.location && <span className="text-muted text-sm">({camera.location})</span>}
-        </div>
-        <div className="toolbar-group">
-          <button className="btn btn-danger btn-sm" onClick={handleDelete} id="delete-camera">
-            <Trash2 size={14} /> Xóa
-          </button>
+      {/* Page Header */}
+      <div className="flex items-center gap-3 mb-4 lg:mb-6">
+        <button 
+          className="flex items-center justify-center w-10 h-10 rounded-xl hover:bg-white/10 transition-colors shrink-0 bg-secondary" 
+          onClick={() => navigate('/')}
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div>
+          <h2 className="text-lg md:text-xl font-bold leading-tight flex items-center gap-2">
+            {camera.name}
+            <div className={`w-2 h-2 rounded-full ${camera.enabled ? 'bg-green-500' : 'bg-red-500'}`} />
+          </h2>
+          {camera.location && (
+            <p className="text-xs md:text-sm text-muted mt-0.5">{camera.location}</p>
+          )}
         </div>
       </div>
 

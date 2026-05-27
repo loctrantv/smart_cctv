@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getEvents, getCameras, getMediaUrl, deleteEvent, deleteEvents } from '../utils/api';
 import { format } from 'date-fns';
-import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2, Volume2 } from 'lucide-react';
+import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2, Volume2, ChevronDown, RefreshCw } from 'lucide-react';
 import { useApp } from '../App';
 
 const typeIcons  = { person: User, face: ScanFace, motion: Activity, sound_alert: Volume2 };
@@ -102,61 +102,77 @@ export default function Events() {
 
   return (
     <div>
-      {/* Filters & Bulk Actions Toolbar */}
-      <div className="toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-        <div className="toolbar-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Filter size={16} className="text-muted" />
-          <select className="form-select" style={{ width: 160 }}
-            value={filters.camera_id} onChange={e => setFilters({ ...filters, camera_id: e.target.value })}>
-            <option value="">Tất cả camera</option>
-            {cameras.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <select className="form-select" style={{ width: 140 }}
-            value={filters.type} onChange={e => setFilters({ ...filters, type: e.target.value })}>
-            <option value="">Tất cả loại</option>
-            <option value="person">Người</option>
-            <option value="face">Khuôn mặt</option>
-            <option value="motion">Chuyển động</option>
-            <option value="sound_alert">🔊 Âm thanh lạ</option>
-          </select>
+      {/* Filters & Actions Control Bar */}
+      <div className="filter-bar">
+        <div className="filter-group">
+          <div className="flex items-center gap-2 text-muted mr-2">
+            <Filter size={18} />
+            <span className="text-xs font-semibold uppercase tracking-wider hidden lg:inline">Bộ lọc</span>
+          </div>
+          
+          <div className="filter-select-wrapper">
+            <select 
+              className="filter-select"
+              value={filters.camera_id} 
+              onChange={e => setFilters({ ...filters, camera_id: e.target.value })}
+            >
+              <option value="">Tất cả camera</option>
+              {cameras.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <ChevronDown className="filter-chevron" />
+          </div>
+
+          <div className="filter-select-wrapper">
+            <select 
+              className="filter-select"
+              value={filters.type} 
+              onChange={e => setFilters({ ...filters, type: e.target.value })}
+            >
+              <option value="">Tất cả loại</option>
+              <option value="person">Người</option>
+              <option value="face">Khuôn mặt</option>
+              <option value="motion">Chuyển động</option>
+              <option value="sound_alert">Âm thanh lạ</option>
+            </select>
+            <ChevronDown className="filter-chevron" />
+          </div>
+
+          <button 
+            className={`refresh-btn ${loading ? 'loading' : ''}`}
+            onClick={fetchEvents}
+            title="Làm mới"
+            disabled={loading}
+          >
+            <RefreshCw size={18} />
+          </button>
         </div>
 
-        {events.length > 0 && (
-          <div className="toolbar-group" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.875rem', userSelect: 'none' }}>
+        <div className="bulk-actions">
+          {events.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
               <input 
                 type="checkbox" 
                 checked={allSelected} 
                 onChange={handleToggleSelectAll}
-                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                className="w-4 h-4 rounded border-border bg-input transition-all cursor-pointer"
               />
-              <span>Chọn tất cả ({events.length})</span>
+              <span className="text-sm font-medium">Toàn bộ ({events.length})</span>
             </label>
-            {selectedIds.size > 0 && (
-              <button 
-                onClick={handleBulkDelete}
-                className="btn btn-danger"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
-                  fontSize: '0.875rem',
-                  borderRadius: '6px',
-                  background: 'var(--danger)',
-                  color: '#fff',
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <Trash2 size={14} />
-                Xóa {selectedIds.size} đã chọn
-              </button>
-            )}
+          )}
+
+          {selectedIds.size > 0 && (
+            <button 
+              onClick={handleBulkDelete}
+              className="btn btn-danger btn-sm px-4"
+            >
+              <Trash2 size={14} />
+              <span>Xóa {selectedIds.size}</span>
+            </button>
+          )}
+          <div className="ml-auto hidden md:flex items-center gap-2 text-muted text-xs">
+            <span>{total} sự kiện</span>
           </div>
-        )}
-        
-        <span className="text-xs text-muted">{total} sự kiện</span>
+        </div>
       </div>
 
       {/* Events List */}
@@ -171,7 +187,7 @@ export default function Events() {
             const Icon = typeIcons[evt.type] || Activity;
             return (
               <div key={evt.id} className="event-card" id={`event-${evt.id}`} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ paddingLeft: '8px', display: 'flex', alignItems: 'center' }}>
+                <div className="pl-1 md:pl-2 flex items-center shrink-0">
                   <input 
                     type="checkbox" 
                     checked={selectedIds.has(evt.id)}
@@ -221,11 +237,11 @@ export default function Events() {
                       {evt.face_name}
                     </span>
                   )}
-                  <div className="event-time mt-2">
+                  <div className="event-time mt-1 md:mt-2">
                     {evt.camera_name} · {evt.timestamp ? format(new Date(evt.timestamp), 'HH:mm:ss dd/MM/yyyy') : ''}
                   </div>
                   {evt.confidence > 0 && (
-                    <div className="text-xs text-muted mt-2">
+                    <div className="text-xs text-muted mt-0.5 md:mt-1">
                       Độ tin cậy: {(evt.confidence * 100).toFixed(0)}%
                     </div>
                   )}

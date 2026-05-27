@@ -189,6 +189,9 @@ export default function Dashboard() {
                 className={`dashboard-camera-cell ${camera.record_enabled ? 'is-recording' : ''}`}
                 onClick={() => navigate(`/camera/${camera.id}`)}
                 id={`camera-cell-${camera.id}`}
+                style={{ 
+                  aspectRatio: cameraAspects[camera.id] ? `${cameraAspects[camera.id]}` : undefined 
+                }}
               >
                 {/* Video Player */}
                 <div className="dashboard-video-container">

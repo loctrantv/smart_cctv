@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getSystemInfo, getSettings, updateSettings, getCameras } from '../utils/api';
-import { Settings as SettingsIcon, HardDrive, Cpu, Save, RefreshCw, Camera, Volume2, Activity } from 'lucide-react';
+import { getSystemInfo, getSettings, updateSettings, getCameras, deleteCamera } from '../utils/api';
+import { Settings as SettingsIcon, HardDrive, Cpu, Save, RefreshCw, Camera, Volume2, Activity, Trash2 } from 'lucide-react';
 
 export default function SettingsPage() {
   const [sysInfo, setSysInfo] = useState(null);
@@ -24,6 +24,16 @@ export default function SettingsPage() {
       alert('Lỗi: ' + err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeleteCamera = async (id) => {
+    if (!confirm('Xóa camera này? Tất cả recordings và events sẽ bị xóa.')) return;
+    try {
+      await deleteCamera(id);
+      setCameras(cameras.filter(c => c.id !== id));
+    } catch (err) {
+      alert('Lỗi khi xóa camera: ' + err.message);
     }
   };
 
@@ -80,7 +90,17 @@ export default function SettingsPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <div className={`status-dot ${cam.enabled ? '' : 'offline'}`} />
-                          <span className="text-xs">{cam.enabled ? 'Online' : 'Offline'}</span>
+                          <span className="text-xs mr-2">{cam.enabled ? 'Online' : 'Offline'}</span>
+                          <div className="h-4 w-[1px] bg-border mx-1"></div>
+                          <button 
+                            className="btn btn-danger btn-sm"
+                            style={{ height: '32px', padding: '0 8px' }}
+                            onClick={() => handleDeleteCamera(cam.id)}
+                            title="Xóa camera"
+                          >
+                            <Trash2 size={14} />
+                            <span className="hidden sm:inline ml-1 text-xs">Xóa</span>
+                          </button>
                         </div>
                       </div>
                     </div>

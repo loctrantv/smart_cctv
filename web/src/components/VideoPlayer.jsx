@@ -10,7 +10,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
   const pcRef = useRef(null);
   const [mode, setMode] = useState('webrtc'); // webrtc | hls | error
   const [connected, setConnected] = useState(false);
-  const [aspectRatio, setLocalAspectRatio] = useState(16 / 9);
+  const [aspectRatio, setLocalAspectRatio] = useState(null); // default to null to let parent/CSS handle initial state
 
   const handleLoadedMetadata = (e) => {
     const video = e.target;
@@ -158,7 +158,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
 
   if (!streams) {
     return (
-      <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
+      <div className="video-player-container" style={{ aspectRatio: aspectRatio || 16/9, width: '100%', height: 'auto' }}>
         <div className="video-placeholder">
           <VideoOff size={compact ? 20 : 32} />
           {!compact && <p>Không có stream</p>}
@@ -169,7 +169,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
 
   if (mode === 'error') {
     return (
-      <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
+      <div className="video-player-container" style={{ aspectRatio: aspectRatio || 16/9, width: '100%', height: 'auto' }}>
         <div className="video-placeholder">
           <VideoOff size={compact ? 20 : 32} />
           {!compact && <p>Không thể kết nối camera</p>}
@@ -180,7 +180,7 @@ export default function VideoPlayer({ streamId, streams, autoPlay = true, muted 
 
   return (
     
-    <div className="video-player-container" style={{ aspectRatio, width: '100%', height: 'auto' }}>
+    <div className="video-player-container" style={{ aspectRatio: aspectRatio || (compact ? 8/9 : 16/9), width: '100%', height: 'auto' }}>
       <video
         ref={videoRef}
         autoPlay={autoPlay}

@@ -8,7 +8,7 @@ import {
 } from '../utils/api';
 import { format } from 'date-fns';
 import { vi } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Play, Pause, FastForward, SkipBack, SkipForward, Trash2, Image as ImageIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, FastForward, SkipBack, SkipForward, Trash2, Image as ImageIcon, ChevronDown, Calendar, Camera } from 'lucide-react';
 
 export default function Playback() {
   const [cameras, setCameras] = useState([]);
@@ -383,28 +383,44 @@ export default function Playback() {
   
   return (
     <div>
-      {/* Controls */}
-      <div className="toolbar">
-        <div className="toolbar-group">
-          <select
-            className="form-select camera-select"
-            value={selectedCamera?.id || ''}
-            onChange={e => setSelectedCamera(cameras.find(c => c.id === e.target.value))}
-          >
-            {cameras.map(cam => (
-              <option key={cam.id} value={cam.id}>{cam.name}</option>
-            ))}
-          </select>
+      {/* Controls & Filter Bar */}
+      <div className="filter-bar">
+        <div className="filter-group">
+          <div className="flex items-center gap-2 text-muted mr-1">
+            <Camera size={18} />
+            <span className="text-xs font-semibold uppercase tracking-wider hidden lg:inline">Camera</span>
+          </div>
+
+          <div className="filter-select-wrapper">
+            <select
+              className="filter-select"
+              value={selectedCamera?.id || ''}
+              onChange={e => setSelectedCamera(cameras.find(c => c.id === e.target.value))}
+            >
+              {cameras.map(cam => (
+                <option key={cam.id} value={cam.id}>{cam.name}</option>
+              ))}
+            </select>
+            <ChevronDown className="filter-chevron" />
+          </div>
           
+          <div className="h-6 w-[1px] bg-border mx-2 hidden md:block" />
+
           <div className="flex items-center gap-2">
-            <button className="btn-icon" onClick={() => changeDate(-1)}><ChevronLeft size={16} /></button>
-            <input
-              type="date"
-              className="form-input date-input"
-              value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value)}
-            />
-            <button className="btn-icon" onClick={() => changeDate(1)}><ChevronRight size={16} /></button>
+            <div className="flex items-center gap-1">
+              <button className="btn-icon btn-sm" onClick={() => changeDate(-1)}><ChevronLeft size={14} /></button>
+              
+              <div className="relative flex items-center">
+                <input
+                  type="date"
+                  className="filter-select !pl-9 !pr-4 !min-w-[150px]"
+                  value={selectedDate}
+                  onChange={e => setSelectedDate(e.target.value)}
+                />
+              </div>
+
+              <button className="btn-icon btn-sm" onClick={() => changeDate(1)}><ChevronRight size={14} /></button>
+            </div>
           </div>
         </div>
       </div>
