@@ -203,11 +203,10 @@ class DetectionWorker {
   _createEvent(camera, snapPath, relativeSnapPath, type, label, confidence) {
     const id = uuidv4();
     const timestamp = new Date().toISOString();
-
     this.db.prepare(`
       INSERT INTO events (id, camera_id, type, label, confidence, timestamp, snapshot_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, camera.id, type, label, Math.min(confidence, 1), timestamp, relativeSnapPath);
+      VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
+    `).run(id, camera.id, type, label, Math.min(confidence, 1), relativeSnapPath);
 
     const event = { id, camera_id: camera.id, camera_name: camera.name, type, label, confidence, timestamp, snapshot_path: relativeSnapPath };
     this.broadcast({ type: 'detection_event', event });
