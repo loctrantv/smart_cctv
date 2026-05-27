@@ -32,6 +32,14 @@ class RecordingManager {
     console.log(`[REC] Starting motion recording for: ${camera.name} (${durationSeconds}s)`);
     this._spawnSegment(camera, durationSeconds, 'motion');
   }
+
+  startSoundRecording(camera, durationSeconds = 30) {
+    if (this.processes.has(camera.id)) {
+      return; // Already recording – do not interrupt existing session
+    }
+    console.log(`[REC] Starting sound recording for: ${camera.name} (${durationSeconds}s)`);
+    this._spawnSegment(camera, durationSeconds, 'sound');
+  }
   
   _spawnSegment(camera, durationSeconds, mode = 'continuous') {
     let segmentDuration = durationSeconds;

@@ -145,6 +145,11 @@ server.listen(PORT, () => {
 
   // Start recording for cameras with auto-record enabled
   const cameras = db.prepare('SELECT * FROM cameras WHERE enabled = 1').all();
+
+  // Check if sound detection is globally enabled
+  const soundRow = db.prepare("SELECT value FROM settings WHERE key = 'sound.detection_enabled'").get();
+  const soundDetectionEnabled = soundRow ? soundRow.value === '1' : false;
+
   cameras.forEach(camera => {
     // Register with go2rtc
     go2rtcClient.addStream(camera.stream_id, camera.rtsp_url).catch(err => {
@@ -156,9 +161,14 @@ server.listen(PORT, () => {
       recordingManager.startRecording(camera);
     }
 
-    // Start detection if configured
+    // Start visual detection if configured
     if (camera.detection_enabled) {
       detectionWorker.startDetection(camera);
+    }
+
+    // Start sound detection if globally enabled and camera has detection on
+    if (soundDetectionEnabled && camera.detection_enabled) {
+      detectionWorker.startSoundDetection(camera);
     }
   });
 

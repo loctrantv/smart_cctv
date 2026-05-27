@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { getEvents, getCameras, getMediaUrl, deleteEvent, deleteEvents } from '../utils/api';
 import { format } from 'date-fns';
-import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2 } from 'lucide-react';
+import { AlertTriangle, User, ScanFace, Activity, Filter, Trash2, Volume2 } from 'lucide-react';
 import { useApp } from '../App';
 
-const typeIcons = { person: User, face: ScanFace, motion: Activity };
-const typeLabels = { person: 'Người', face: 'Khuôn mặt', motion: 'Chuyển động' };
+const typeIcons  = { person: User, face: ScanFace, motion: Activity, sound_alert: Volume2 };
+const typeLabels = { person: 'Người', face: 'Khuôn mặt', motion: 'Chuyển động', sound_alert: 'Âm thanh lạ' };
 
 export default function Events() {
   const [events, setEvents] = useState([]);
@@ -117,6 +117,7 @@ export default function Events() {
             <option value="person">Người</option>
             <option value="face">Khuôn mặt</option>
             <option value="motion">Chuyển động</option>
+            <option value="sound_alert">🔊 Âm thanh lạ</option>
           </select>
         </div>
 
@@ -191,13 +192,28 @@ export default function Events() {
                       })}
                     />
                   ) : (
-                    <div className="video-placeholder" style={{ height: '100%' }}>
-                      <Icon size={20} />
+                    <div className="video-placeholder" style={{
+                      height: '100%',
+                      background: evt.type === 'sound_alert'
+                        ? 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05))'
+                        : undefined,
+                    }}>
+                      <Icon size={20} style={evt.type === 'sound_alert' ? { color: '#f59e0b' } : {}} />
                     </div>
                   )}
                 </div>
                 <div className="event-info">
-                  <span className={`event-type ${evt.type}`}>
+                  <span className={`event-type ${evt.type}`}
+                    style={evt.type === 'sound_alert' ? {
+                      background: 'rgba(245, 158, 11, 0.15)',
+                      color: '#f59e0b',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    } : {}}
+                  >
+                    {evt.type === 'sound_alert' && <Volume2 size={12} />}
                     {typeLabels[evt.type] || evt.type}
                   </span>
                   {evt.face_name && (

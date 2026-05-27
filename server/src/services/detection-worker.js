@@ -16,8 +16,10 @@ class DetectionWorker {
     this.go2rtcRtspUrl = go2rtcRtspUrl || 'rtsp://localhost:8554';
     this.broadcast = broadcast;
     this.recordingManager = recordingManager;
-    this.workers = new Map(); // cameraId -> { interval, lastHash }
+    this.workers = new Map();      // cameraId -> visual detection worker
+    this.soundWorkers = new Map(); // cameraId -> sound detection worker
     this.intervalMs = parseInt(process.env.DETECTION_INTERVAL_MS || '3000');
+    this.soundIntervalMs = 5000; // Check sound every 5 seconds
   }
   
   startDetection(camera) {
@@ -53,9 +55,45 @@ class DetectionWorker {
     console.log(`[DET] Stopped detection for camera: ${cameraId}`);
   }
 
+  // ============================================
+  // Sound Detection
+  // ============================================
+
+  startSoundDetection(camera) {
+    if (this.soundWorkers.has(camera.id)) return;
+    console.log(`[SND] Starting sound detection for: ${camera.name}`);
+
+    const scheduleNext = () => {
+      const worker = this.soundWorkers.get(camera.id);
+      if (!worker || worker.stopped) return;
+
+      worker.timer = setTimeout(async () => {
+        if (!worker.stopped) {
+          await this._captureAndAnalyzeSound(camera);
+          scheduleNext();
+        }
+      }, this.soundIntervalMs);
+    };
+
+    this.soundWorkers.set(camera.id, { timer: null, stopped: false });
+    scheduleNext();
+  }
+
+  stopSoundDetection(cameraId) {
+    const worker = this.soundWorkers.get(cameraId);
+    if (!worker) return;
+    worker.stopped = true;
+    clearTimeout(worker.timer);
+    this.soundWorkers.delete(cameraId);
+    console.log(`[SND] Stopped sound detection for camera: ${cameraId}`);
+  }
+
   stopAll() {
     for (const [cameraId] of this.workers) {
       this.stopDetection(cameraId);
+    }
+    for (const [cameraId] of this.soundWorkers) {
+      this.stopSoundDetection(cameraId);
     }
   }
 
@@ -227,6 +265,134 @@ class DetectionWorker {
       }
     } catch (err) {
       console.error('[DET] Failed to trigger motion recording:', err.message);
+    }
+  }
+
+  // ============================================
+  // Sound Detection Helpers
+  // ============================================
+
+  /**
+   * Check if current time is within the configured night-time window.
+   * Night start/end are stored as integer hours (e.g. 22 and 6).
+   * Handles cross-midnight ranges (e.g. 22 -> 06).
+   */
+  _isNightTime() {
+    try {
+      const startRow = this.db.prepare("SELECT value FROM settings WHERE key = 'sound.night_start'").get();
+      const endRow   = this.db.prepare("SELECT value FROM settings WHERE key = 'sound.night_end'").get();
+      const nightStart = startRow ? parseInt(startRow.value) : 22;
+      const nightEnd   = endRow   ? parseInt(endRow.value)   : 6;
+
+      const hour = new Date().getHours();
+      if (nightStart < nightEnd) {
+        // e.g. 01:00 – 05:00 (no cross-midnight)
+        return hour >= nightStart && hour < nightEnd;
+      } else {
+        // e.g. 22:00 – 06:00 (cross-midnight)
+        return hour >= nightStart || hour < nightEnd;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Capture ~3s of audio from RTSP, parse FFmpeg loudness output,
+   * and trigger a sound_alert event if the level exceeds threshold.
+   */
+  async _captureAndAnalyzeSound(camera) {
+    // Only run during night-time window
+    if (!this._isNightTime()) return;
+
+    try {
+      const threshRow = this.db.prepare("SELECT value FROM settings WHERE key = 'sound.threshold_db'").get();
+      const thresholdDb = threshRow ? parseFloat(threshRow.value) : -20;
+
+      const rmsLevel = await this._measureAudioRms(camera);
+      if (rmsLevel === null) return; // stream silent or error
+
+      console.log(`[SND] ${camera.name} RMS: ${rmsLevel.toFixed(1)} dBFS (threshold: ${thresholdDb} dBFS)`);
+
+      if (rmsLevel >= thresholdDb) {
+        // Confidence: how much louder than threshold (clamped 0-1)
+        const overDb = rmsLevel - thresholdDb;
+        const confidence = Math.min(overDb / 20, 1.0); // full confidence at +20 dB over threshold
+
+        this._createEvent(camera, null, null, 'sound_alert', 'unusual_sound', confidence);
+        this._triggerSoundRecording(camera);
+      }
+    } catch (err) {
+      // Silent fail – sound detection is non-critical
+    }
+  }
+
+  /**
+   * Run FFmpeg for ~4 seconds, reading astats metadata to obtain
+   * the overall RMS level in dBFS. Returns null on failure.
+   */
+  _measureAudioRms(camera) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      let proc = null;
+      const done = (val) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(val);
+      };
+
+      const hardTimer = setTimeout(() => {
+        try { proc && proc.kill('SIGKILL'); } catch {}
+        done(null);
+      }, 10000);
+
+      const args = [
+        '-rtsp_transport', 'tcp',
+        '-i', `${this.go2rtcRtspUrl}/${camera.stream_id}`,
+        '-vn',                                // no video
+        '-af', 'astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level',
+        '-f', 'null',
+        '-t', '4',
+        '-',
+      ];
+
+      proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+
+      let stderr = '';
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+      proc.on('close', (code) => {
+        clearTimeout(hardTimer);
+        // Parse: lavfi.astats.Overall.RMS_level=-18.32
+        const match = stderr.match(/lavfi\.astats\.Overall\.RMS_level=([\-\d.]+)/);
+        if (match) {
+          const db = parseFloat(match[1]);
+          done(isFinite(db) ? db : null);
+        } else {
+          done(null);
+        }
+      });
+
+      proc.on('error', () => {
+        clearTimeout(hardTimer);
+        done(null);
+      });
+    });
+  }
+
+  _triggerSoundRecording(camera) {
+    if (!this.recordingManager) return;
+    try {
+      const enabledRow = this.db.prepare("SELECT value FROM settings WHERE key = 'sound.recording_enabled'").get();
+      const recordingEnabled = enabledRow ? enabledRow.value === '1' : true;
+
+      if (recordingEnabled) {
+        const durRow = this.db.prepare("SELECT value FROM settings WHERE key = 'sound.recording_duration'").get();
+        const duration = durRow ? parseInt(durRow.value) : 30;
+        this.recordingManager.startSoundRecording(camera, duration);
+      }
+    } catch (err) {
+      console.error('[SND] Failed to trigger sound recording:', err.message);
     }
   }
 

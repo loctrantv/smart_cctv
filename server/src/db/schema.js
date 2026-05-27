@@ -140,6 +140,13 @@ function initDatabase(dbPath) {
     'recording.on_motion_enabled': '0',
     'recording.on_motion_duration': '30',
     'system.timezone': 'Asia/Ho_Chi_Minh',
+    // Sound detection settings
+    'sound.detection_enabled': '0',
+    'sound.night_start': '22',
+    'sound.night_end': '6',
+    'sound.threshold_db': '-20',
+    'sound.recording_enabled': '1',
+    'sound.recording_duration': '30',
   };
 
   const insertMany = db.transaction(() => {
