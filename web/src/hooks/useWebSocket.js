@@ -12,8 +12,12 @@ export function useWebSocket(token) {
       return;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+    const defaultWsUrl = import.meta.env.PROD 
+      ? 'wss://camera.tranhtuongtravinh.com'
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    
+    const wsBase = import.meta.env.VITE_WS_URL || defaultWsUrl;
+    const wsUrl = `${wsBase}/ws?token=${encodeURIComponent(token)}`;
 
     function connect() {
       const ws = new WebSocket(wsUrl);

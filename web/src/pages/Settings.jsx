@@ -141,7 +141,7 @@ export default function SettingsPage() {
                 onChange={e => setSettings({ ...settings, 'detection.confidence_threshold': e.target.value })} />
             </div>
 
-            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border-color, rgba(255,255,255,0.1))' }} />
+            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
 
             <div className="form-group">
               <label className="form-label">Quay phim khi phát hiện chuyển động</label>

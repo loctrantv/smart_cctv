@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = '/api';
+const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://camera.tranhtuongtravinh.com' : '');
+const API_BASE = `${API_HOST}/api`;
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -40,7 +41,7 @@ export const verifyToken = () => api.get('/auth/verify').then(r => r.data);
 // Helper to construct authenticated URLs for videos and images
 export const getMediaUrl = (path) => {
   const token = localStorage.getItem('smart_cctv_token');
-  return `/media/${path}?token=${token}`;
+  return `${API_HOST}/media/${path}?token=${token}`;
 };
 
 // Cameras

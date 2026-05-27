@@ -321,7 +321,7 @@ export default function CameraView() {
 
             {/* Zone Config Control Panel */}
             {showZoneConfig && (
-              <div className="card mt-3 animate-fadeIn" style={{ border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(0, 0, 0, 0.2)' }}>
+              <div className="card mt-3 animate-fadeIn" style={{ border: '1px solid rgba(239, 68, 68, 0.3)', background: 'var(--bg-elevated)' }}>
                 <style>{`
                   @keyframes fadeIn {
                     from { opacity: 0; transform: translateY(-10px); }
@@ -349,13 +349,13 @@ export default function CameraView() {
                   </div>
 
                   {zones.length === 0 ? (
-                    <div className="text-xs text-muted p-3 text-center" style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
+                    <div className="text-xs text-muted p-3 text-center" style={{ background: 'var(--bg-input)', borderRadius: '4px', border: '1px dashed var(--border)' }}>
                       Chưa vẽ vùng quét nào. Camera sẽ mặc định phát hiện chuyển động trên toàn màn hình.
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
                       {zones.map((z, idx) => (
-                        <div key={idx} className="flex justify-between items-center p-2" style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div key={idx} className="flex justify-between items-center p-2" style={{ background: 'var(--bg-input)', borderRadius: '4px', border: '1px solid var(--border)' }}>
                           <span className="text-xs font-bold" style={{ color: 'var(--danger, #ef4444)' }}>Vùng #{idx + 1}</span>
                           <span className="text-xs text-mono text-muted">{Math.round(z.w*100)}% x {Math.round(z.h*100)}%</span>
                           <button 

@@ -1,9 +1,9 @@
-import React, { useState, createContext, useContext } from 'react';
+import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import {
   LayoutGrid, Camera, PlayCircle, AlertTriangle,
-  Users, Settings, Menu, X, Wifi, WifiOff, Shield, LogOut
+  Users, Settings, Menu, X, Wifi, WifiOff, Shield, LogOut, Sun, Moon
 } from 'lucide-react';
 
 import Dashboard from './pages/Dashboard';
@@ -25,8 +25,18 @@ export default function App() {
     return u ? JSON.parse(u) : null;
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem('smart_cctv_theme') || 'dark');
   const ws = useWebSocket(token);
   const location = useLocation();
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('smart_cctv_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
 
   const handleLoginSuccess = (newToken, newUser) => {
     setToken(newToken);
@@ -57,7 +67,7 @@ export default function App() {
   const pageTitle = navItems.find(n => n.path === location.pathname)?.label || 'Camera';
 
   return (
-    <AppContext.Provider value={{ ws }}>
+    <AppContext.Provider value={{ ws, theme, toggleTheme }}>
       <div className="app-layout">
         {/* Mobile backdrop */}
         {sidebarOpen && (
@@ -137,7 +147,10 @@ export default function App() {
               <h2 className="header-title">{pageTitle}</h2>
             </div>
             <div className="header-right">
-              <div className="flex items-center gap-2 text-xs text-muted text-mono">
+              <button onClick={toggleTheme} className="header-btn" title="Giao diện Sáng/Tối">
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <div className="flex items-center gap-2 text-xs text-muted text-mono date-display">
                 {new Date().toLocaleDateString('vi-VN')} {new Date().toLocaleTimeString('vi-VN')}
               </div>
             </div>
