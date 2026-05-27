@@ -5,3 +5,4 @@
 .idea
 /server/data/
 /.env
+/web/.env
