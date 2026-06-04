@@ -12,9 +12,7 @@ export function useWebSocket(token) {
       return;
     }
 
-    const defaultWsUrl = import.meta.env.PROD 
-      ? 'wss://camera.tranhtuongtravinh.com'
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    const defaultWsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
     
     const wsBase = import.meta.env.VITE_WS_URL || defaultWsUrl;
     const wsUrl = `${wsBase}/ws?token=${encodeURIComponent(token)}`;

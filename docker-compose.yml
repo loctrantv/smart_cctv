@@ -44,7 +44,7 @@ services:
       - DB_PATH=${DB_PATH:-/app/data/smart_cctv.db}
       - RECORDINGS_PATH=${RECORDINGS_PATH:-/app/data/recordings}
       - SNAPSHOTS_PATH=${SNAPSHOTS_PATH:-/app/data/snapshots}
-      - GO2RTC_URL=${GO2RTC_URL:-https://camera.tranhtuongtravinh.com/go2rtc}
+      - GO2RTC_URL=${GO2RTC_URL:-http://localhost:1984}
       - GO2RTC_RTSP_URL=${GO2RTC_RTSP_URL:-rtsp://localhost:8554}
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
       - DETECTION_INTERVAL_MS=${DETECTION_INTERVAL_MS:-3000}
