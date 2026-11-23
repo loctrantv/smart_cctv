@@ -15,7 +15,7 @@ use std::time::Instant;
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},

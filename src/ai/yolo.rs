@@ -141,7 +141,7 @@ impl YoloDetector {
         if shape.len() != 3 || shape[1] < 24 {
             return Vec::new();
         }
-        let num_Anchors = shape[2];
+        let num_anchors = shape[2];
 
         // Target COCO classes for CCTV Security:
         // 0: person
@@ -160,7 +160,7 @@ impl YoloDetector {
 
         let mut candidates = Vec::new();
 
-        for a in 0..num_Anchors {
+        for a in 0..num_anchors {
             let mut best_conf = 0.0f32;
             let mut best_target: Option<(usize, &str, &str)> = None;
 

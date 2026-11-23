@@ -18,8 +18,6 @@ use crate::security::resolve_safe_path;
 use crate::ws::WsHub;
 
 struct ActiveRecSession {
-    recording_id: String,
-    mode: String,
     stop_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -126,15 +124,12 @@ impl RecordingManager {
         }
 
         let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
-        let rec_id = Uuid::new_v4().to_string();
 
         {
             let mut guard = self.sessions.lock().unwrap();
             guard.insert(
                 camera.id.clone(),
                 ActiveRecSession {
-                    recording_id: rec_id.clone(),
-                    mode: mode.to_string(),
                     stop_tx: Some(stop_tx),
                 },
             );

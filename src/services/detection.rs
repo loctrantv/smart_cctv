@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{Timelike, Utc};
-use image::{imageops::FilterType, DynamicImage, GenericImageView, RgbImage};
+use image::{imageops::FilterType, DynamicImage, RgbImage};
 use rusqlite::params;
 use serde_json::json;
 use tokio::process::Command;
@@ -126,7 +126,7 @@ impl DetectionEngine {
 
         let engine = self.clone();
         let cam_id = camera.id.clone();
-        tracing::info!("[AI DET] Started in-memory vision worker for {}", camera.name);
+        tracing::info!("[AI DET] Started in-memory AI vision worker for {}", camera.name);
 
         tokio::spawn(async move {
             let mut prev_gray_thumb: Option<Vec<u8>> = None;
@@ -241,8 +241,11 @@ impl DetectionEngine {
         }
     }
 
-    /// Fetch JPEG directly into RAM from go2rtc (or fallback to FFmpeg stdout pipe into RAM),
-    /// run multi-tier AI & Vision detection, and write snapshot to disk ONLY when an event triggers!
+    /// Pure AI & Pixel-Diff Vision Pipeline (Legacy Red-Box BFS detector completely removed!)
+    /// 1. Pulls JPEG directly into RAM from go2rtc (Zero disk writes for non-events)
+    /// 2. Checks fast Luma Frame-Differencing motion gate (< 0.15ms)
+    /// 3. Runs Dual-Lens YOLOv8n (Person / Vehicle / Animal), ByteTrack Tripwire & Loitering,
+    ///    ArcFace 512-D Face Recognition, and Vietnam ALPR License Plate Recognition.
     async fn process_camera_frame(
         &self,
         camera: &CameraRow,
@@ -267,20 +270,21 @@ impl DetectionEngine {
         let rgb_img = dyn_img.to_rgb8();
 
         // Parse configured zones & tripwires
-        let zones: Vec<DetectionZone> = serde_json::from_str(&camera.detection_zone).unwrap_or_default();
+        let zones: Vec<DetectionZone> =
+            serde_json::from_str(&camera.detection_zone).unwrap_or_default();
         let tripwires: Vec<TripwireLine> =
             serde_json::from_str(&camera.tripwire_config).unwrap_or_default();
 
-        // 2. Fast Motion Gate & Red-Box BFS Check in RAM (< 0.4ms)
-        let scaled_rgb = dyn_img
-            .resize_exact(640, 360, FilterType::Nearest)
-            .to_rgb8();
+        // 2. Fast Luma Frame-Differencing Motion Gate in RAM (< 0.15ms)
+        let motion_diff_score = compute_frame_motion_diff(&dyn_img, prev_gray_thumb, &zones);
 
-        let has_red_box = detect_red_bounding_box_in_ram(&scaled_rgb, &zones);
-        let motion_diff_score = compute_frame_motion_diff(&scaled_rgb, prev_gray_thumb, &zones);
-
-        // Cooldown 4s between consecutive visual events on same camera to prevent flood
+        // Cooldown 4s between consecutive visual events on same camera
         if last_event_time.elapsed() < Duration::from_secs(4) {
+            return;
+        }
+
+        // If frame is static (< 1.2% pixel change in active zones), skip neural inference to save CPU
+        if motion_diff_score < 0.012 {
             return;
         }
 
@@ -299,8 +303,8 @@ impl DetectionEngine {
             String,
         )> = Vec::new();
 
-        // 3. Tier 2: YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
-        if self.yolo.is_loaded() && (has_red_box || motion_diff_score > 0.015) {
+        // 3. YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
+        if self.yolo.is_loaded() {
             let detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
 
             // Evaluate ByteTrack Tripwire Line Crossing & Zone Intrusion / Loitering
@@ -381,14 +385,13 @@ impl DetectionEngine {
                     json!({ "lens": det.lens, "class": det.label }).to_string(),
                 ));
             }
-        }
-
-        // Fallback to Red-Box detection when YOLO triggers no specific class or is not yet downloaded
-        if triggered_events.is_empty() && has_red_box {
+        } else if motion_diff_score >= 0.035 {
+            // Pure Pixel Frame-Differencing motion event if YOLOv8n model is not yet downloaded
+            let conf = (motion_diff_score * 8.0).clamp(0.5, 0.98);
             triggered_events.push((
                 "motion".to_string(),
-                "motion_detected".to_string(),
-                1.0,
+                format!("Chuyển động ({:.1}%)", motion_diff_score * 100.0),
+                conf,
                 None,
                 (0.0, 0.0, 0.0, 0.0),
                 "{}".to_string(),
@@ -401,7 +404,7 @@ impl DetectionEngine {
 
         *last_event_time = Instant::now();
 
-        // Save snapshot to disk ONLY because an actual event occurred!
+        // Save snapshot to disk ONLY when an actual AI/Motion event occurred
         let cam_snap_dir = self.snapshots_path.join(&camera.id);
         let _ = fs::create_dir_all(&cam_snap_dir);
         let snap_name = format!("snap_{}.jpg", crate::auth::now_ms());
@@ -412,7 +415,9 @@ impl DetectionEngine {
             return;
         }
 
-        for (evt_type, label, conf, face_id, (bx, by, bw, bh), meta) in triggered_events.into_iter().take(2) {
+        for (evt_type, label, conf, face_id, (bx, by, bw, bh), meta) in
+            triggered_events.into_iter().take(2)
+        {
             self.record_event(
                 camera,
                 &evt_type,
@@ -432,7 +437,8 @@ impl DetectionEngine {
                 .get_setting("recording.on_motion_duration", "30")
                 .parse::<u64>()
                 .unwrap_or(30);
-            self.recording_mgr.start_motion_recording(camera.clone(), dur);
+            self.recording_mgr
+                .start_motion_recording(camera.clone(), dur);
         }
 
         cleanup_camera_snapshots(&cam_snap_dir, 150);
@@ -481,7 +487,8 @@ impl DetectionEngine {
                     .get_setting("sound.recording_duration", "30")
                     .parse::<u64>()
                     .unwrap_or(30);
-                self.recording_mgr.start_sound_recording(camera.clone(), dur);
+                self.recording_mgr
+                    .start_sound_recording(camera.clone(), dur);
             }
         }
     }
@@ -588,127 +595,13 @@ fn is_inside_zones(cx: f64, cy: f64, zones: &[DetectionZone]) -> bool {
         .any(|z| cx >= z.x && cx <= (z.x + z.w) && cy >= z.y && cy <= (z.y + z.h))
 }
 
-/// Native Rust Red-Box BFS detector (< 0.35ms on 640x360 frame in RAM)
-fn detect_red_bounding_box_in_ram(rgb: &RgbImage, zones: &[DetectionZone]) -> bool {
-    let (width, height) = rgb.dimensions();
-    let w_usize = width as usize;
-    let h_usize = height as usize;
-    let num_pixels = w_usize * h_usize;
-
-    let mut is_red = vec![0u8; num_pixels];
-    let mut red_pixels = Vec::new();
-
-    for y in 0..h_usize {
-        for x in 0..w_usize {
-            let norm_x = x as f64 / w_usize as f64;
-            let norm_y = y as f64 / h_usize as f64;
-            if !is_inside_zones(norm_x, norm_y, zones) {
-                continue;
-            }
-
-            let p = rgb.get_pixel(x as u32, y as u32);
-            let r = p[0] as i32;
-            let g = p[1] as i32;
-            let b = p[2] as i32;
-
-            if r > 150 && g < 80 && b < 80 && (r - g) > 80 && (r - b) > 80 {
-                let idx = y * w_usize + x;
-                is_red[idx] = 1;
-                red_pixels.push((x as i32, y as i32));
-            }
-        }
-    }
-
-    if red_pixels.len() < 20 {
-        return false;
-    }
-
-    let mut visited = vec![0u8; num_pixels];
-    let mut queue = VecDeque::new();
-
-    for &(sx, sy) in &red_pixels {
-        let start_idx = (sy as usize) * w_usize + (sx as usize);
-        if visited[start_idx] != 0 {
-            continue;
-        }
-
-        let mut cluster = Vec::new();
-        visited[start_idx] = 1;
-        queue.push_back((sx, sy));
-
-        while let Some((cx, cy)) = queue.pop_front() {
-            cluster.push((cx, cy));
-            for dy in -2..=2 {
-                for dx in -2..=2 {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-                    let nx = cx + dx;
-                    let ny = cy + dy;
-                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                        let nidx = (ny as usize) * w_usize + (nx as usize);
-                        if is_red[nidx] != 0 && visited[nidx] == 0 {
-                            visited[nidx] = 1;
-                            queue.push_back((nx, ny));
-                        }
-                    }
-                }
-            }
-        }
-
-        if cluster.len() >= 30 {
-            let mut min_x = width as i32;
-            let mut max_x = 0;
-            let mut min_y = height as i32;
-            let mut max_y = 0;
-
-            for &(px, py) in &cluster {
-                min_x = min_x.min(px);
-                max_x = max_x.max(px);
-                min_y = min_y.min(py);
-                max_y = max_y.max(py);
-            }
-
-            let bw = max_x - min_x;
-            let bh = max_y - min_y;
-
-            if (20..=620).contains(&bw) && (20..=340).contains(&bh) {
-                let mut border_count = 0usize;
-                let mut inner_count = 0usize;
-                for &(px, py) in &cluster {
-                    let near_border = (px - min_x <= 5)
-                        || (max_x - px <= 5)
-                        || (py - min_y <= 5)
-                        || (max_y - py <= 5);
-                    if near_border {
-                        border_count += 1;
-                    } else {
-                        inner_count += 1;
-                    }
-                }
-
-                let total = cluster.len() as f64;
-                let inner_ratio = inner_count as f64 / total;
-                let perimeter = 2.0 * (bw + bh) as f64;
-                let coverage = border_count as f64 / perimeter;
-
-                if inner_ratio < 0.3 && coverage > 0.15 {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-/// Fast Frame-Differencing motion energy detector in RAM
+/// Fast Frame-Differencing motion energy detector in RAM (< 0.15ms)
 fn compute_frame_motion_diff(
-    rgb: &RgbImage,
+    dyn_img: &DynamicImage,
     prev_gray: &mut Option<Vec<u8>>,
     zones: &[DetectionZone],
 ) -> f64 {
-    let small = DynamicImage::ImageRgb8(rgb.clone())
+    let small = dyn_img
         .resize_exact(160, 90, FilterType::Nearest)
         .to_luma8();
     let curr: Vec<u8> = small.into_raw();

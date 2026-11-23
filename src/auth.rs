@@ -248,9 +248,7 @@ pub fn build_session_cookie(headers: &HeaderMap, token: &str, max_age_sec: u64) 
 
 #[derive(Clone, Debug)]
 pub struct AuthUser {
-    pub id: String,
     pub username: String,
-    pub token_version: i64,
 }
 
 /// Axum middleware enforcing authentication & auto-healing missing HttpOnly cookies
@@ -302,9 +300,7 @@ pub async fn auth_middleware(
     };
 
     req.extensions_mut().insert(AuthUser {
-        id: user.id,
         username: user.username,
-        token_version: user.token_version,
     });
 
     let mut res = next.run(req).await;

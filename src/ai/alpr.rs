@@ -1,8 +1,7 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use image::{GenericImageView, RgbImage};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;
 
@@ -16,13 +15,6 @@ pub struct LicensePlateResult {
     pub y: f64,
     pub w: f64,
     pub h: f64,
-}
-
-fn vn_plate_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"^[1-9][0-9][A-Z][0-9A-Z]?-[0-9]{3}\.?[0-9]{2}$").unwrap()
-    })
 }
 
 #[derive(Clone)]
@@ -152,25 +144,11 @@ impl AlprEngine {
         let w = ((pw * fw as f64) as u32).clamp(8, fw - x0);
         let h = ((ph * fh as f64) as u32).clamp(8, fh - y0);
 
-        let sub = frame.view(x0, y0, w, h);
         let is_two_line = (w as f64 / h.max(1) as f64) < 2.2;
         if is_two_line {
             "BIỂN SỐ 2 DÒNG (VN)".to_string()
         } else {
             "BIỂN SỐ 1 DÒNG (VN)".to_string()
         }
-    }
-}
-
-pub fn normalize_vn_plate(raw: &str) -> String {
-    let cleaned: String = raw
-        .to_uppercase()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.')
-        .collect();
-    if vn_plate_regex().is_match(&cleaned) {
-        cleaned
-    } else {
-        raw.trim().to_uppercase()
     }
 }
