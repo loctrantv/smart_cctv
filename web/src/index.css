@@ -3057,3 +3057,369 @@ a {
     transform: none;
   }
 }
+
+
+/* ============================================================
+   PROFESSIONAL NVR PLAYBACK PLAYER & LAZY THUMBNAIL STYLES
+   ============================================================ */
+
+.nvr-pro-player-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #020306;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.nvr-player-osd-header {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: rgba(5, 7, 14, 0.78);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.nvr-rec-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  background: rgba(0, 212, 255, 0.14);
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* Embedded Professional Bottom Scrubber & Transport Bar */
+.nvr-pro-control-bar {
+  background: linear-gradient(180deg, rgba(10, 12, 20, 0.92), rgba(6, 7, 12, 0.98));
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 30;
+  user-select: none;
+}
+
+.nvr-clip-scrubber {
+  position: relative;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.nvr-scrubber-rail {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  transition: height 120ms ease;
+}
+
+.nvr-clip-scrubber:hover .nvr-scrubber-rail {
+  height: 8px;
+}
+
+.nvr-scrubber-buffered {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.nvr-scrubber-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--accent), #38bdf8);
+  border-radius: 999px;
+  box-shadow: 0 0 10px var(--accent-glow);
+  pointer-events: none;
+}
+
+.nvr-scrubber-event-dot {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--warning);
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.nvr-scrubber-event-dot.motion {
+  background: #ff453a;
+}
+
+.nvr-scrubber-event-dot.sound_alert {
+  background: #ff9f0a;
+}
+
+.nvr-scrubber-thumb {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.8);
+  transform: translate(-50%, -50%) scale(0.85);
+  transition: transform 120ms ease;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.nvr-clip-scrubber:hover .nvr-scrubber-thumb {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.nvr-scrubber-tooltip {
+  position: absolute;
+  top: -26px;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(8, 10, 18, 0.95);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 15;
+}
+
+.nvr-transport-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nvr-transport-left,
+.nvr-transport-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nvr-ctrl-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.nvr-ctrl-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(0, 212, 255, 0.1);
+}
+
+.nvr-ctrl-btn.primary {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.nvr-ctrl-btn.primary:hover {
+  opacity: 0.9;
+}
+
+.nvr-volume-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nvr-volume-slider {
+  width: 64px;
+  height: 4px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.nvr-timecode-readout {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  margin-left: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nvr-timecode-readout .tc-curr {
+  color: #fff;
+  font-weight: 700;
+}
+
+.nvr-timecode-readout .tc-sep,
+.nvr-timecode-readout .tc-dur {
+  color: var(--text-secondary);
+}
+
+.nvr-timecode-readout .tc-wall {
+  color: var(--accent);
+  font-size: 0.7rem;
+  margin-left: 4px;
+}
+
+.nvr-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e8f0;
+  font-size: 0.73rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.nvr-pill-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Graduated 24h Master Timeline Ruler */
+.nvr-graduated-timeline {
+  height: 44px;
+  background: #080a12;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.nvr-ruler-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.nvr-ruler-tick.major {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.nvr-ruler-tick.minor {
+  height: 35%;
+}
+
+.nvr-ruler-tick-label {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.nvr-graduated-timeline .timeline-segment.recording {
+  top: 18px;
+  height: 24px;
+  background: rgba(0, 212, 255, 0.28);
+  border-top: 2px solid var(--accent);
+}
+
+.nvr-graduated-timeline .timeline-segment.event {
+  top: 18px;
+  height: 24px;
+  background: rgba(255, 59, 48, 0.75);
+  border-top: 2px solid #fff;
+  z-index: 3;
+}
+
+.nvr-playhead-needle {
+  width: 2px;
+  background: #ff3b30;
+  box-shadow: 0 0 8px #ff3b30;
+  z-index: 10;
+}
+
+.nvr-playhead-cap {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  background: #ff3b30;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* Lazy-Loaded Thumbnail Component */
+.nvr-lazy-thumb {
+  position: relative;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #07080e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.nvr-lazy-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.nvr-lazy-img.is-loaded {
+  opacity: 1;
+}
+
+.nvr-lazy-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07));
+}
+
+.nvr-segment-card.is-playing {
+  border-color: var(--accent) !important;
+  background: rgba(0, 212, 255, 0.06);
+}

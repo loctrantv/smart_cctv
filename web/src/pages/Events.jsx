@@ -200,8 +200,9 @@ export default function Events() {
                     <img 
                       src={getMediaUrl(`snapshots/${evt.snapshot_path}`)} 
                       alt="snapshot" 
-                      loading="lazy" 
-                      style={{ cursor: 'zoom-in' }}
+                      loading="lazy"
+                      decoding="async"
+                      style={{ cursor: 'zoom-in', background: '#07080d' }}
                       onClick={() => setZoomImage({
                         src: getMediaUrl(`snapshots/${evt.snapshot_path}`),
                         title: `${typeLabels[evt.type] || evt.type} - ${evt.camera_name} (${evt.timestamp ? format(new Date(evt.timestamp), 'HH:mm:ss dd/MM/yyyy') : ''})`

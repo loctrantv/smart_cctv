@@ -52,6 +52,8 @@ export default function FaceLibrary() {
                   <img 
                     src={getMediaUrl(`snapshots/${face.photo_path}`)} 
                     alt={face.name}
+                    loading="lazy"
+                    decoding="async"
                     style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
                     onClick={() => setZoomImage({
                       src: getMediaUrl(`snapshots/${face.photo_path}`),

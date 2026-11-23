@@ -24,7 +24,77 @@ import {
   ArrowUpSquare,
   ArrowDownSquare,
   Download,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Minimize,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
 } from 'lucide-react';
+
+/**
+ * Lazy-loaded Thumbnail component using IntersectionObserver
+ * Prevents network/rendering lag when there are hundreds of recordings or event images.
+ */
+function LazyThumb({ src, alt, width = 68, height = 42 }) {
+  const containerRef = useRef(null);
+  const [inView, setInView] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setErrored(false);
+  }, [src]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !src) return;
+    if (!('IntersectionObserver' in window)) {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setInView(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { rootMargin: '120px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [src]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="nvr-lazy-thumb"
+      style={{ width, height, minWidth: width, minHeight: height }}
+    >
+      {src && inView && !errored ? (
+        <img
+          src={src}
+          alt={alt || 'thumb'}
+          loading="lazy"
+          decoding="async"
+          className={`nvr-lazy-img ${loaded ? 'is-loaded' : ''}`}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErrored(true)}
+        />
+      ) : null}
+      {(!src || !loaded || errored) && (
+        <div className="nvr-lazy-placeholder">
+          <ImageIcon size={15} className="opacity-40" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Playback() {
   const [cameras, setCameras] = useState([]);
@@ -35,15 +105,30 @@ export default function Playback() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
 
+  // Professional Video Player Scrubber State (for active clip)
+  const [clipCurrentTime, setClipCurrentTime] = useState(0);
+  const [clipDuration, setClipDuration] = useState(0);
+  const [clipBufferedPct, setClipBufferedPct] = useState(0);
+  const [clipHoverTime, setClipHoverTime] = useState(null);
+  const [clipHoverPct, setClipHoverPct] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(30); // Incremental list rendering
+
   // Dual-Lens Playback View Mode ('split' | 'stacked' | 'top' | 'bottom')
   const [lensMode, setLensMode] = useState('split');
   const [hoverTimeLabel, setHoverTimeLabel] = useState(null);
   const [hoverPct, setHoverPct] = useState(0);
 
+  const playerWrapperRef = useRef(null);
   const videoRef = useRef(null);
   const secondaryVideoRef = useRef(null);
   const seekTimeRef = useRef(null);
   const currentVideoIdRef = useRef(null);
+  const clipProgressRef = useRef(null);
+  const isScrubbingClipRef = useRef(false);
+
   const [cursorPct, setCursorPct] = useState(null);
   const [aspectRatio, setAspectRatio] = useState(8 / 9);
 
@@ -77,6 +162,9 @@ export default function Playback() {
   useEffect(() => {
     if (!currentRecording) {
       setCursorPct(null);
+      setClipCurrentTime(0);
+      setClipDuration(0);
+      setClipBufferedPct(0);
       setAspectRatio(8 / 9);
     }
   }, [currentRecording]);
@@ -90,10 +178,19 @@ export default function Playback() {
 
   useEffect(() => {
     if (!selectedCamera) return;
+    setVisibleCount(30);
     getTimeline(selectedCamera.id, selectedDate)
       .then(setTimeline)
       .catch(() => setTimeline({ recordings: [], events: [] }));
   }, [selectedCamera, selectedDate]);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
 
   const parseUTCDate = (str) => {
     if (!str) return new Date();
@@ -120,6 +217,30 @@ export default function Playback() {
     };
   }, [timelineDayBounds, visibleRange]);
 
+  // Generate 24h ruler ticks (major hour ticks & 15-min minor ticks)
+  const rulerTicks = useMemo(() => {
+    const ticks = [];
+    const spanHours = (timelineBounds.duration / 3600000);
+    const stepMinutes = spanHours <= 3 ? 15 : spanHours <= 8 ? 30 : 60;
+    const stepMs = stepMinutes * 60 * 1000;
+    const firstTick = Math.ceil(timelineBounds.start / stepMs) * stepMs;
+
+    for (let ts = firstTick; ts <= timelineBounds.end; ts += stepMs) {
+      const pct = ((ts - timelineBounds.start) / timelineBounds.duration) * 100;
+      const d = new Date(ts);
+      const mins = d.getMinutes();
+      const isMajor = mins === 0;
+      const label = d.toLocaleTimeString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: 'Asia/Ho_Chi_Minh',
+      });
+      ticks.push({ pct, isMajor, label });
+    }
+    return ticks;
+  }, [timelineBounds]);
+
   const playRecording = useCallback(
     (rec, seekSeconds = 0) => {
       const isSameVideo = currentVideoIdRef.current === rec.id;
@@ -144,10 +265,14 @@ export default function Playback() {
         currentVideoIdRef.current = rec.id;
         setCurrentRecording(rec);
         setPlaying(true);
+        setClipCurrentTime(seekSeconds);
+        setClipDuration(rec.duration_seconds || 0);
         seekTimeRef.current = seekSeconds;
         setTimeout(() => {
           if (videoRef.current) {
             videoRef.current.src = streamUrl;
+            videoRef.current.muted = isMuted;
+            videoRef.current.volume = volume;
             videoRef.current.playbackRate = speed;
             videoRef.current.play().catch(() => {});
           }
@@ -159,7 +284,7 @@ export default function Playback() {
         }, 50);
       }
     },
-    [speed, currentRecording]
+    [speed, currentRecording, isMuted, volume]
   );
 
   // Seamless auto-advance to next segment when current segment ends
@@ -177,29 +302,171 @@ export default function Playback() {
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
+      const v = videoRef.current;
+      if (Number.isFinite(v.duration) && v.duration > 0) {
+        setClipDuration(v.duration);
+      } else if (currentRecording?.duration_seconds) {
+        setClipDuration(currentRecording.duration_seconds);
+      }
+
       if (seekTimeRef.current !== null && seekTimeRef.current > 0) {
-        videoRef.current.currentTime = seekTimeRef.current;
+        v.currentTime = seekTimeRef.current;
         if (secondaryVideoRef.current) {
           secondaryVideoRef.current.currentTime = seekTimeRef.current;
         }
         seekTimeRef.current = null;
       }
-      videoRef.current.playbackRate = speed;
-      if (videoRef.current.videoWidth && videoRef.current.videoHeight) {
-        setAspectRatio(videoRef.current.videoWidth / videoRef.current.videoHeight);
+      v.playbackRate = speed;
+      v.muted = isMuted;
+      v.volume = volume;
+      if (v.videoWidth && v.videoHeight) {
+        setAspectRatio(v.videoWidth / v.videoHeight);
       }
       syncSecondaryPlayback();
     }
   };
 
   const handleTimeUpdate = () => {
-    if (!videoRef.current || !currentRecording || isDragging.current) return;
-    const start = parseUTCDate(currentRecording.start_time);
-    const currentTimestamp = start.getTime() + videoRef.current.currentTime * 1000;
+    const v = videoRef.current;
+    if (!v || !currentRecording) return;
 
-    const pct = ((currentTimestamp - timelineBounds.start) / timelineBounds.duration) * 100;
-    setCursorPct(Math.max(0, Math.min(100, pct)));
+    if (!isScrubbingClipRef.current) {
+      setClipCurrentTime(v.currentTime);
+    }
+
+    const dur =
+      Number.isFinite(v.duration) && v.duration > 0
+        ? v.duration
+        : currentRecording.duration_seconds || 0;
+    if (dur > 0) {
+      setClipDuration(dur);
+      if (v.buffered && v.buffered.length > 0) {
+        const bufferedEnd = v.buffered.end(v.buffered.length - 1);
+        setClipBufferedPct(Math.min(100, (bufferedEnd / dur) * 100));
+      }
+    }
+
+    if (!isDragging.current) {
+      const start = parseUTCDate(currentRecording.start_time);
+      const currentTimestamp = start.getTime() + v.currentTime * 1000;
+      const pct = ((currentTimestamp - timelineBounds.start) / timelineBounds.duration) * 100;
+      setCursorPct(Math.max(0, Math.min(100, pct)));
+    }
     syncSecondaryPlayback();
+  };
+
+  // Format mm:ss or hh:mm:ss for the clip player progress bar
+  const formatClockDuration = (sec) => {
+    if (!Number.isFinite(sec) || sec < 0) return '00:00';
+    const total = Math.floor(sec);
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hrs > 0) {
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(
+        secs
+      ).padStart(2, '0')}`;
+    }
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  // Professional Player Clip Scrubber Interactions
+  const seekClipByClientX = (clientX) => {
+    if (!clipProgressRef.current || !videoRef.current) return;
+    const rect = clipProgressRef.current.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const effectiveDur =
+      clipDuration ||
+      (Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0) ||
+      currentRecording?.duration_seconds ||
+      0;
+    if (effectiveDur <= 0) return;
+
+    const targetSec = pct * effectiveDur;
+    setClipCurrentTime(targetSec);
+    videoRef.current.currentTime = targetSec;
+    if (secondaryVideoRef.current) {
+      secondaryVideoRef.current.currentTime = targetSec;
+    }
+  };
+
+  const handleClipScrubStart = (e) => {
+    isScrubbingClipRef.current = true;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    seekClipByClientX(clientX);
+  };
+
+  const handleClipScrubMove = (e) => {
+    if (!clipProgressRef.current) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const rect = clipProgressRef.current.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const effectiveDur = clipDuration || currentRecording?.duration_seconds || 0;
+    setClipHoverPct(pct * 100);
+    setClipHoverTime(pct * effectiveDur);
+
+    if (isScrubbingClipRef.current) {
+      seekClipByClientX(clientX);
+    }
+  };
+
+  const handleClipScrubEnd = () => {
+    isScrubbingClipRef.current = false;
+    setClipHoverTime(null);
+  };
+
+  const togglePlayPause = () => {
+    if (!videoRef.current) return;
+    if (playing) {
+      videoRef.current.pause();
+      secondaryVideoRef.current?.pause();
+      setPlaying(false);
+    } else {
+      videoRef.current.play().catch(() => {});
+      secondaryVideoRef.current?.play().catch(() => {});
+      setPlaying(true);
+    }
+  };
+
+  const toggleMute = () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    if (videoRef.current) videoRef.current.muted = next;
+  };
+
+  const handleVolumeChange = (e) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
+    setIsMuted(val === 0);
+    if (videoRef.current) {
+      videoRef.current.volume = val;
+      videoRef.current.muted = val === 0;
+    }
+  };
+
+  const toggleFullscreenPlayer = () => {
+    const el = playerWrapperRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  };
+
+  const zoomTimeline = (factor) => {
+    setVisibleRange(([start, end]) => {
+      const span = end - start;
+      const center = cursorPct !== null ? start + (cursorPct / 100) * span : (start + end) / 2;
+      const newSpan = Math.max(0.04, Math.min(1, span * factor));
+      let newStart = Math.max(0, center - newSpan / 2);
+      let newEnd = newStart + newSpan;
+      if (newEnd > 1) {
+        newEnd = 1;
+        newStart = Math.max(0, 1 - newSpan);
+      }
+      return [newStart, newEnd];
+    });
   };
 
   // Capture PNG snapshot directly from recorded video playback
@@ -325,6 +592,24 @@ export default function Playback() {
     },
     [timeline]
   );
+
+  // Events belonging to the currently playing recording clip (rendered as markers on the clip progress bar!)
+  const currentClipEvents = useMemo(() => {
+    if (!currentRecording || !timeline.events) return [];
+    const startMs = parseUTCDate(currentRecording.start_time).getTime();
+    const durSec = clipDuration || currentRecording.duration_seconds || 900;
+    const endMs = startMs + durSec * 1000;
+
+    return timeline.events
+      .map((evt) => {
+        const evtMs = parseUTCDate(evt.timestamp).getTime();
+        if (evtMs < startMs || evtMs > endMs) return null;
+        const offsetSec = (evtMs - startMs) / 1000;
+        const pct = Math.max(0, Math.min(100, (offsetSec / durSec) * 100));
+        return { ...evt, offsetSec, pct };
+      })
+      .filter(Boolean);
+  }, [currentRecording, timeline.events, clipDuration]);
 
   const [isDraggingRange, setIsDraggingRange] = useState(false);
   const [dragType, setDragType] = useState(null);
@@ -483,6 +768,20 @@ export default function Playback() {
       });
   }, [timeline.recordings, timeline.events]);
 
+  // Compute live wall-clock timestamp of current playhead
+  const currentWallClockLabel = useMemo(() => {
+    if (!currentRecording) return '--:--:--';
+    const startMs = parseUTCDate(currentRecording.start_time).getTime();
+    return formatTimeLocal(new Date(startMs + clipCurrentTime * 1000).toISOString());
+  }, [currentRecording, clipCurrentTime]);
+
+  const effectiveClipDuration =
+    clipDuration || currentRecording?.duration_seconds || 0;
+  const clipProgressPct =
+    effectiveClipDuration > 0
+      ? Math.min(100, Math.max(0, (clipCurrentTime / effectiveClipDuration) * 100))
+      : 0;
+
   return (
     <div>
       {/* NVR Top Filter & Dual-Lens Mode Bar */}
@@ -565,18 +864,65 @@ export default function Playback() {
       </div>
 
       <div className="playback-layout-container">
-        {/* Left column: Dual-Lens NVR Video Stage and Deck Controls */}
+        {/* Left column: Dual-Lens NVR Video Stage + Embedded Professional Player Timeline Bar */}
         <div className="playback-video-section">
-          <div className="playback-video-wrapper shadow-md border border-border">
+          <div
+            ref={playerWrapperRef}
+            className="playback-video-wrapper nvr-pro-player-shell shadow-md border border-border"
+          >
             {currentRecording ? (
-              <div className={`vms-player-root lens-mode-${lensMode}`}>
-                {lensMode === 'split' ? (
-                  <div className="vms-dual-split-grid">
-                    <div className="vms-split-pane">
-                      <span className="vms-lens-tag">MẮT 1 (TRÊN - 16:9)</span>
-                      <div className="vms-crop-box crop-top">
+              <>
+                {/* Top-Left OSD Timecode & Channel Overlay */}
+                <div className="nvr-player-osd-header">
+                  <span className="nvr-rec-badge">● PLAYBACK</span>
+                  <span className="text-xs font-bold">{selectedCamera?.name}</span>
+                  <span className="text-xs text-mono" style={{ color: 'var(--accent)' }}>
+                    {currentWallClockLabel}
+                  </span>
+                </div>
+
+                {/* Video Viewport (Dual-Lens Split / Stacked / Top / Bottom) */}
+                <div
+                  className={`vms-player-root lens-mode-${lensMode}`}
+                  onClick={togglePlayPause}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {lensMode === 'split' ? (
+                    <div className="vms-dual-split-grid">
+                      <div className="vms-split-pane">
+                        <span className="vms-lens-tag">MẮT 1 (TRÊN - 16:9)</span>
+                        <div className="vms-crop-box crop-top">
+                          <video
+                            ref={videoRef}
+                            playsInline
+                            onEnded={handleVideoEnded}
+                            onLoadedMetadata={handleLoadedMetadata}
+                            onTimeUpdate={handleTimeUpdate}
+                            onPlay={() => setPlaying(true)}
+                            onPause={() => setPlaying(false)}
+                          />
+                        </div>
+                      </div>
+                      <div className="vms-split-pane">
+                        <span className="vms-lens-tag">MẮT 2 (DƯỚI - 16:9)</span>
+                        <div className="vms-crop-box crop-bottom">
+                          <video ref={secondaryVideoRef} muted playsInline />
+                        </div>
+                      </div>
+                    </div>
+                  ) : lensMode === 'top' || lensMode === 'bottom' ? (
+                    <div className="vms-single-lens-stage">
+                      <span className="vms-lens-tag">
+                        {lensMode === 'top' ? 'MẮT 1 (TRÊN 16:9)' : 'MẮT 2 (DƯỚI 16:9)'}
+                      </span>
+                      <div
+                        className={`vms-crop-box ${
+                          lensMode === 'top' ? 'crop-top' : 'crop-bottom'
+                        }`}
+                      >
                         <video
                           ref={videoRef}
+                          playsInline
                           onEnded={handleVideoEnded}
                           onLoadedMetadata={handleLoadedMetadata}
                           onTimeUpdate={handleTimeUpdate}
@@ -585,25 +931,17 @@ export default function Playback() {
                         />
                       </div>
                     </div>
-                    <div className="vms-split-pane">
-                      <span className="vms-lens-tag">MẮT 2 (DƯỚI - 16:9)</span>
-                      <div className="vms-crop-box crop-bottom">
-                        <video ref={secondaryVideoRef} muted />
-                      </div>
-                    </div>
-                  </div>
-                ) : lensMode === 'top' || lensMode === 'bottom' ? (
-                  <div className="vms-single-lens-stage">
-                    <span className="vms-lens-tag">
-                      {lensMode === 'top' ? 'MẮT 1 (TRÊN 16:9)' : 'MẮT 2 (DƯỚI 16:9)'}
-                    </span>
-                    <div
-                      className={`vms-crop-box ${
-                        lensMode === 'top' ? 'crop-top' : 'crop-bottom'
-                      }`}
-                    >
+                  ) : (
+                    <div className="vms-stacked-stage">
                       <video
                         ref={videoRef}
+                        playsInline
+                        style={{
+                          maxWidth: '100%',
+                          maxHeight: '100%',
+                          aspectRatio: `${aspectRatio}`,
+                          objectFit: 'contain',
+                        }}
                         onEnded={handleVideoEnded}
                         onLoadedMetadata={handleLoadedMetadata}
                         onTimeUpdate={handleTimeUpdate}
@@ -611,25 +949,183 @@ export default function Playback() {
                         onPause={() => setPlaying(false)}
                       />
                     </div>
+                  )}
+                </div>
+
+                {/* Professional Embedded Player Control & Scrubber Bar */}
+                <div
+                  className="nvr-pro-control-bar"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Interactive Clip Scrubber Track with Buffer Bar, Event Markers & Hover Time Preview */}
+                  <div
+                    ref={clipProgressRef}
+                    className="nvr-clip-scrubber"
+                    onMouseDown={handleClipScrubStart}
+                    onMouseMove={handleClipScrubMove}
+                    onMouseUp={handleClipScrubEnd}
+                    onMouseLeave={handleClipScrubEnd}
+                    onTouchStart={handleClipScrubStart}
+                    onTouchMove={handleClipScrubMove}
+                    onTouchEnd={handleClipScrubEnd}
+                  >
+                    {clipHoverTime !== null && (
+                      <div
+                        className="nvr-scrubber-tooltip text-mono"
+                        style={{ left: `${clipHoverPct}%` }}
+                      >
+                        {formatClockDuration(clipHoverTime)}
+                      </div>
+                    )}
+
+                    <div className="nvr-scrubber-rail">
+                      {/* Buffered progress */}
+                      <div
+                        className="nvr-scrubber-buffered"
+                        style={{ width: `${clipBufferedPct}%` }}
+                      />
+                      {/* Played progress */}
+                      <div
+                        className="nvr-scrubber-played"
+                        style={{ width: `${clipProgressPct}%` }}
+                      />
+                      {/* AI Event tick markers on the clip bar */}
+                      {currentClipEvents.map((evt) => (
+                        <div
+                          key={evt.id}
+                          className={`nvr-scrubber-event-dot ${evt.type}`}
+                          style={{ left: `${evt.pct}%` }}
+                          title={`Sự kiện: ${evt.type} (${formatClockDuration(evt.offsetSec)})`}
+                        />
+                      ))}
+                      {/* Playhead handle */}
+                      <div
+                        className="nvr-scrubber-thumb"
+                        style={{ left: `${clipProgressPct}%` }}
+                      />
+                    </div>
                   </div>
-                ) : (
-                  <div className="vms-stacked-stage">
-                    <video
-                      ref={videoRef}
-                      controls
-                      style={{
-                        maxWidth: '100%',
-                        maxHeight: '100%',
-                        aspectRatio: `${aspectRatio}`,
-                        objectFit: 'contain',
-                      }}
-                      onEnded={handleVideoEnded}
-                      onLoadedMetadata={handleLoadedMetadata}
-                      onTimeUpdate={handleTimeUpdate}
-                    />
+
+                  {/* Transport Controls Row */}
+                  <div className="nvr-transport-row">
+                    <div className="nvr-transport-left">
+                      <button
+                        type="button"
+                        className="nvr-ctrl-btn primary"
+                        onClick={togglePlayPause}
+                        title={playing ? 'Tạm dừng' : 'Phát'}
+                      >
+                        {playing ? <Pause size={15} /> : <Play size={15} />}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nvr-ctrl-btn"
+                        title="Lùi 10 giây"
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = Math.max(
+                              0,
+                              videoRef.current.currentTime - 10
+                            );
+                          }
+                        }}
+                      >
+                        <SkipBack size={14} />
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nvr-ctrl-btn"
+                        title="Tua tới 10 giây"
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = Math.min(
+                              effectiveClipDuration || 9999,
+                              videoRef.current.currentTime + 10
+                            );
+                          }
+                        }}
+                      >
+                        <SkipForward size={14} />
+                      </button>
+
+                      {/* Volume Control */}
+                      <div className="nvr-volume-group">
+                        <button
+                          type="button"
+                          className="nvr-ctrl-btn"
+                          onClick={toggleMute}
+                          title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}
+                        >
+                          {isMuted || volume === 0 ? (
+                            <VolumeX size={14} />
+                          ) : (
+                            <Volume2 size={14} />
+                          )}
+                        </button>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={isMuted ? 0 : volume}
+                          onChange={handleVolumeChange}
+                          className="nvr-volume-slider"
+                        />
+                      </div>
+
+                      {/* Clip Timecode Counter (Current / Duration + Wall-Clock) */}
+                      <div className="nvr-timecode-readout text-mono">
+                        <span className="tc-curr">{formatClockDuration(clipCurrentTime)}</span>
+                        <span className="tc-sep">/</span>
+                        <span className="tc-dur">
+                          {formatClockDuration(effectiveClipDuration)}
+                        </span>
+                        <span className="tc-wall">({currentWallClockLabel})</span>
+                      </div>
+                    </div>
+
+                    <div className="nvr-transport-right">
+                      <button
+                        type="button"
+                        className="nvr-pill-btn"
+                        onClick={changeSpeed}
+                        title="Tốc độ phát"
+                      >
+                        <FastForward size={12} /> {speed}x
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nvr-pill-btn"
+                        onClick={handlePlaybackSnapshot}
+                        title="Chụp ảnh từ khung hình đang xem"
+                      >
+                        <Camera size={12} /> Snapshot
+                      </button>
+
+                      <a
+                        href={getRecordingStreamUrl(currentRecording.id)}
+                        download={`recording_${currentRecording.id}.mp4`}
+                        className="nvr-pill-btn"
+                        title="Tải file video MP4 gốc"
+                      >
+                        <Download size={12} /> MP4
+                      </a>
+
+                      <button
+                        type="button"
+                        className="nvr-ctrl-btn"
+                        onClick={toggleFullscreenPlayer}
+                        title="Phóng toàn màn hình"
+                      >
+                        {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+                      </button>
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
+              </>
             ) : (
               <div
                 className="video-placeholder"
@@ -639,109 +1135,59 @@ export default function Playback() {
                   background: 'var(--bg-secondary)',
                 }}
               >
-                <Play size={32} />
+                <Play size={36} style={{ color: 'var(--accent)', opacity: 0.7 }} />
                 <p style={{ fontSize: '13px', marginTop: '10px', textAlign: 'center' }}>
                   Chọn một đoạn ghi trên thước Timeline 24h hoặc danh sách bên phải để phát lại
                 </p>
               </div>
             )}
           </div>
-
-          {/* NVR Transport Deck Controls */}
-          <div className="card">
-            <div className="card-body" style={{ padding: '10px 14px' }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title="Lùi 10 giây"
-                    onClick={() => {
-                      if (videoRef.current) videoRef.current.currentTime -= 10;
-                    }}
-                  >
-                    <SkipBack size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => {
-                      if (!videoRef.current) return;
-                      if (playing) {
-                        videoRef.current.pause();
-                        secondaryVideoRef.current?.pause();
-                      } else {
-                        videoRef.current.play().catch(() => {});
-                        secondaryVideoRef.current?.play().catch(() => {});
-                      }
-                      setPlaying(!playing);
-                    }}
-                  >
-                    {playing ? <Pause size={16} /> : <Play size={16} />}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title="Tua tới 10 giây"
-                    onClick={() => {
-                      if (videoRef.current) videoRef.current.currentTime += 10;
-                    }}
-                  >
-                    <SkipForward size={16} />
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={changeSpeed}
-                    title="Tốc độ phát lại"
-                  >
-                    <FastForward size={14} /> {speed}x
-                  </button>
-
-                  {currentRecording && (
-                    <>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={handlePlaybackSnapshot}
-                        title="Chụp ảnh PNG từ khung hình đang xem lại"
-                      >
-                        <Camera size={14} /> Chụp ảnh
-                      </button>
-
-                      <a
-                        href={getRecordingStreamUrl(currentRecording.id)}
-                        download={`recording_${currentRecording.id}.mp4`}
-                        className="btn btn-secondary btn-sm"
-                        title="Tải file video MP4 về máy"
-                      >
-                        <Download size={14} /> Tải MP4
-                      </a>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Right column: NVR 24h Timeline Scrubber & Segment List */}
+        {/* Right column: NVR 24h Master Timeline Ruler & Lazy-Loaded Segment List */}
         <div className="playback-data-section">
-          <div className="timeline-container">
+          <div className="timeline-container nvr-master-timeline-card">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-bold text-mono">
-                {formatTimeLocal(new Date(timelineBounds.start).toISOString())} —{' '}
-                {formatTimeLocal(new Date(timelineBounds.end).toISOString())}
-              </span>
-              <span className="text-xs text-muted">
-                {(timeline.recordings || []).length} đoạn · {(timeline.events || []).length} sự kiện
-              </span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted">
+                  Thước Timeline 24 Giờ ({selectedDate})
+                </span>
+                <span className="text-sm font-bold text-mono" style={{ color: 'var(--accent)' }}>
+                  {formatTimeLocal(new Date(timelineBounds.start).toISOString())} —{' '}
+                  {formatTimeLocal(new Date(timelineBounds.end).toISOString())}
+                </span>
+              </div>
+
+              {/* Timeline Zoom Controls */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="btn-icon btn-sm"
+                  onClick={() => zoomTimeline(0.6)}
+                  title="Phóng to thước thời gian (Zoom In)"
+                >
+                  <ZoomIn size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon btn-sm"
+                  onClick={() => zoomTimeline(1.6)}
+                  title="Thu nhỏ thước thời gian (Zoom Out)"
+                >
+                  <ZoomOut size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon btn-sm"
+                  onClick={() => setVisibleRange([0, 1])}
+                  title="Xem toàn bộ 24h"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              </div>
             </div>
 
-            {/* 24h Minimap Zoom Window */}
+            {/* 24h Overview Minimap Zoom Window */}
             <div className="minimap-container" ref={minimapRef}>
               <div className="minimap-track">
                 {timelineSegments(timelineDayBounds).map(
@@ -777,8 +1223,8 @@ export default function Playback() {
               </div>
             </div>
 
-            {/* Interactive Scrubber Bar with Hover Time Tooltip */}
-            <div style={{ position: 'relative' }}>
+            {/* Dual-Track NVR Scrubber Bar with Graduated Hour Ticks & Hover Timecode */}
+            <div style={{ position: 'relative', marginTop: 8 }}>
               {hoverTimeLabel && (
                 <div
                   className="vms-timeline-tooltip text-mono"
@@ -787,10 +1233,10 @@ export default function Playback() {
                   {hoverTimeLabel}
                 </div>
               )}
+
               <div
                 ref={timelineRef}
-                className="timeline-bar"
-                style={{ cursor: 'ew-resize', userSelect: 'none' }}
+                className="timeline-bar nvr-graduated-timeline"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUpOrLeave}
@@ -799,6 +1245,18 @@ export default function Playback() {
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleMouseUpOrLeave}
               >
+                {/* Hour/Minute Ruler Ticks */}
+                {rulerTicks.map((t, idx) => (
+                  <div
+                    key={idx}
+                    className={`nvr-ruler-tick ${t.isMajor ? 'major' : 'minor'}`}
+                    style={{ left: `${t.pct}%` }}
+                  >
+                    {t.isMajor && <span className="nvr-ruler-tick-label">{t.label}</span>}
+                  </div>
+                ))}
+
+                {/* Track 1: Continuous / Event Recordings */}
                 {timelineSegments(timelineBounds).map((seg, i) => (
                   <div
                     key={i}
@@ -813,36 +1271,54 @@ export default function Playback() {
                     }
                   />
                 ))}
+
+                {/* Active Playhead Needle */}
                 {cursorPct !== null && (
-                  <div className="timeline-cursor" style={{ left: `${cursorPct}%` }} />
+                  <div className="timeline-cursor nvr-playhead-needle" style={{ left: `${cursorPct}%` }}>
+                    <div className="nvr-playhead-cap" />
+                  </div>
                 )}
               </div>
 
-              <div className="timeline-labels">
-                <span>{formatTimeLocal(new Date(timelineBounds.start).toISOString())}</span>
-                <span>
-                  {formatTimeLocal(
-                    new Date(timelineBounds.start + timelineBounds.duration * 0.25).toISOString()
-                  )}
-                </span>
-                <span>
-                  {formatTimeLocal(
-                    new Date(timelineBounds.start + timelineBounds.duration * 0.5).toISOString()
-                  )}
-                </span>
-                <span>
-                  {formatTimeLocal(
-                    new Date(timelineBounds.start + timelineBounds.duration * 0.75).toISOString()
-                  )}
-                </span>
-                <span>{formatTimeLocal(new Date(timelineBounds.end).toISOString())}</span>
+              <div className="flex items-center justify-between mt-2 text-xs text-muted">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <span
+                      style={{
+                        width: 10,
+                        height: 6,
+                        borderRadius: 2,
+                        background: 'var(--accent)',
+                        display: 'inline-block',
+                      }}
+                    />{' '}
+                    Ghi hình ({(timeline.recordings || []).length})
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span
+                      style={{
+                        width: 10,
+                        height: 6,
+                        borderRadius: 2,
+                        background: 'var(--danger)',
+                        display: 'inline-block',
+                      }}
+                    />{' '}
+                    Sự kiện AI ({(timeline.events || []).length})
+                  </span>
+                </div>
+                <span className="text-mono">Kéo để tua nhanh</span>
               </div>
             </div>
           </div>
 
-          {/* Recorded Segments List */}
+          {/* Recorded Segments List with IntersectionObserver Lazy-Loaded Thumbnails */}
           <div className="playback-recordings-section mt-3">
-            <h3 className="text-sm font-bold mb-2">Danh sách đoạn ghi hình</h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold">
+                Danh sách đoạn ghi ({recordingsWithEvents.length})
+              </h3>
+            </div>
             {recordingsWithEvents.length === 0 ? (
               <div
                 className="empty-state border border-dashed border-border rounded-lg"
@@ -851,96 +1327,97 @@ export default function Playback() {
                 <p className="text-muted">Không có bản ghi nào trong ngày này</p>
               </div>
             ) : (
-              <div className="recordings-list-scroll">
-                <div className="flex flex-col gap-2 h-full overflow-y-auto pr-2 custom-scrollbar">
-                  {recordingsWithEvents.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="card"
-                      style={{
-                        cursor: 'pointer',
-                        borderColor:
-                          currentRecording?.id === rec.id ? 'var(--accent)' : undefined,
-                      }}
-                      onClick={() => playRecording(rec)}
-                    >
-                      <div className="card-body" style={{ padding: '8px 12px' }}>
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            {rec.thumbUrl ? (
-                              <img
-                                src={getMediaUrl(`snapshots/${rec.thumbUrl}`)}
+              <div
+                className="recordings-list-scroll"
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  if (
+                    el.scrollTop + el.clientHeight >= el.scrollHeight - 100 &&
+                    visibleCount < recordingsWithEvents.length
+                  ) {
+                    setVisibleCount((prev) => prev + 30);
+                  }
+                }}
+              >
+                <div className="flex flex-col gap-2 pr-1">
+                  {recordingsWithEvents.slice(0, visibleCount).map((rec) => {
+                    const isSelected = currentRecording?.id === rec.id;
+                    return (
+                      <div
+                        key={rec.id}
+                        className={`card nvr-segment-card ${isSelected ? 'is-playing' : ''}`}
+                        onClick={() => playRecording(rec)}
+                      >
+                        <div className="card-body" style={{ padding: '8px 12px' }}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <LazyThumb
+                                src={
+                                  rec.thumbUrl
+                                    ? getMediaUrl(`snapshots/${rec.thumbUrl}`)
+                                    : null
+                                }
                                 alt="Event thumb"
-                                style={{
-                                  width: 64,
-                                  height: 40,
-                                  objectFit: 'cover',
-                                  borderRadius: 4,
-                                  background: '#000',
-                                  flexShrink: 0,
-                                }}
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                }}
+                                width={68}
+                                height={42}
                               />
-                            ) : (
-                              <div
-                                style={{
-                                  width: 64,
-                                  height: 40,
-                                  borderRadius: 4,
-                                  background: 'rgba(255,255,255,0.05)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                }}
-                              >
-                                <ImageIcon size={16} className="text-muted" />
+
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-mono text-sm font-bold">
+                                    {formatTimeLocal(rec.start_time)}
+                                  </span>
+                                  {isSelected && (
+                                    <span className="vms-osd-badge ai">ĐANG PHÁT</span>
+                                  )}
+                                </div>
+                                <span className="text-muted text-xs truncate">
+                                  Thời lượng: {formatDuration(rec.duration_seconds)}
+                                  {rec.eventCount > 0 && ` · ${rec.eventCount} sự kiện`}
+                                </span>
                               </div>
-                            )}
-
-                            <div className="flex flex-col">
-                              <span className="text-mono text-sm font-bold">
-                                {formatTimeLocal(rec.start_time)}
-                              </span>
-                              <span className="text-muted text-xs">
-                                Thời lượng: {formatDuration(rec.duration_seconds)}
-                                {rec.eventCount > 0 && ` · (${rec.eventCount} sự kiện)`}
-                              </span>
                             </div>
-                          </div>
 
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={`text-xs ${
-                                rec.status === 'completed' ? 'text-muted' : 'text-accent'
-                              }`}
-                            >
-                              {rec.status === 'completed' ? 'Đã lưu' : 'Đang ghi...'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteRecording(rec.id);
-                              }}
-                              className="btn-icon"
-                              style={{
-                                width: 28,
-                                height: 28,
-                                color: 'var(--danger)',
-                                border: 'none',
-                              }}
-                              title="Xóa bản ghi"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-xs ${
+                                  rec.status === 'completed' ? 'text-muted' : 'text-accent'
+                                }`}
+                              >
+                                {rec.status === 'completed' ? 'Đã lưu' : 'Đang ghi...'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteRecording(rec.id);
+                                }}
+                                className="btn-icon"
+                                style={{
+                                  width: 28,
+                                  height: 28,
+                                  color: 'var(--danger)',
+                                  border: 'none',
+                                }}
+                                title="Xóa bản ghi"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {visibleCount < recordingsWithEvents.length && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm w-full mt-1"
+                      onClick={() => setVisibleCount((prev) => prev + 30)}
+                    >
+                      Hiển thị thêm ({recordingsWithEvents.length - visibleCount} đoạn)
+                    </button>
+                  )}
                 </div>
               </div>
             )}
