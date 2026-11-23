@@ -167,8 +167,8 @@ router.post('/models/:modelId/download', async (req, res) => {
       yolov8n: 'https://huggingface.co/Kalray/yolov8/resolve/main/yolov8n.onnx',
       yunet_face: 'https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx',
       arcface_mbf: 'https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx',
-      alpr_plate: 'https://huggingface.co/yasirfaizahmed/license-plate-object-detection/resolve/main/best.onnx',
-      yamnet_audio: 'https://huggingface.co/qualcomm/YAMNet/resolve/main/YAMNet.onnx',
+      alpr_plate: 'https://huggingface.co/DavidDrill69/yolov11-license-plate-detection/resolve/main/license-plate-finetune-v1n.onnx',
+      yamnet_audio: 'https://huggingface.co/jafet21/yamnetonnx/resolve/main/yamnet.onnx',
     };
     const spec = AI_MODELS_CATALOG.find((m) => m.id === req.params.modelId);
     if (!spec || !urls[spec.id]) {

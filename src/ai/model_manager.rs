@@ -65,8 +65,8 @@ pub fn builtin_model_specs() -> Vec<AiModelSpec> {
             name: "YOLO Vietnam License Plate & OCR".to_string(),
             category: "alpr".to_string(),
             filename: "license_plate_detector.onnx".to_string(),
-            download_url: "https://huggingface.co/yasirfaizahmed/license-plate-object-detection/resolve/main/best.onnx".to_string(),
-            size_mb: 11.8,
+            download_url: "https://huggingface.co/DavidDrill69/yolov11-license-plate-detection/resolve/main/license-plate-finetune-v1n.onnx".to_string(),
+            size_mb: 10.5,
             description: "Phát hiện & đọc ký tự biển số xe Việt Nam (1 dòng & 2 dòng)".to_string(),
         },
         AiModelSpec {
@@ -74,8 +74,8 @@ pub fn builtin_model_specs() -> Vec<AiModelSpec> {
             name: "YAMNet Smart Audio Classifier".to_string(),
             category: "audio".to_string(),
             filename: "yamnet.onnx".to_string(),
-            download_url: "https://huggingface.co/qualcomm/YAMNet/resolve/main/YAMNet.onnx".to_string(),
-            size_mb: 14.5,
+            download_url: "https://huggingface.co/jafet21/yamnetonnx/resolve/main/yamnet.onnx".to_string(),
+            size_mb: 15.4,
             description: "Phân biệt Tiếng kính vỡ, Tiếng la hét, Trẻ em khóc, Chó sủa, Còi báo động".to_string(),
         },
     ]
