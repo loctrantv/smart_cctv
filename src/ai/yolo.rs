@@ -42,17 +42,29 @@ impl YoloDetector {
     pub fn load_from_file(&self, model_path: &Path) -> Result<(), String> {
         let model = tract_onnx::onnx()
             .model_for_path(model_path)
-            .map_err(|e| format!("Failed to read ONNX model: {}", e))?
+            .map_err(|e| {
+                tracing::error!("[AI YOLO] Failed to read ONNX model {:?}: {}", model_path, e);
+                format!("Failed to read ONNX model: {}", e)
+            })?
             .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
-            .map_err(|e| format!("Failed to set input shape: {}", e))?
+            .map_err(|e| {
+                tracing::error!("[AI YOLO] Failed to set input shape: {}", e);
+                format!("Failed to set input shape: {}", e)
+            })?
             .into_optimized()
-            .map_err(|e| format!("Failed to optimize ONNX graph: {}", e))?
+            .map_err(|e| {
+                tracing::error!("[AI YOLO] Failed to optimize ONNX graph: {}", e);
+                format!("Failed to optimize ONNX graph: {}", e)
+            })?
             .into_runnable()
-            .map_err(|e| format!("Failed to compile runnable plan: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("[AI YOLO] Failed to compile runnable plan: {}", e);
+                format!("Failed to compile runnable plan: {}", e)
+            })?;
 
         let mut guard = self.session.lock().unwrap();
         *guard = Some(model);
-        tracing::info!("[AI YOLO] Loaded YOLOv8n ONNX model from {:?}", model_path);
+        tracing::info!("[AI YOLO] Successfully loaded & compiled YOLOv8n ONNX model from {:?}", model_path);
         Ok(())
     }
 
@@ -136,17 +148,8 @@ impl YoloDetector {
             return Vec::new();
         };
 
-        // YOLOv8 output shape: [1, 84, 8400]
-        let shape = view_arr.shape();
-        if shape.len() != 3 || shape[1] < 24 {
-            return Vec::new();
-        }
-        let num_anchors = shape[2];
-
         // Target COCO classes for CCTV Security:
-        // 0: person
-        // 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck
-        // 15: cat, 16: dog
+        // 0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck, 15: cat, 16: dog
         let target_classes: &[(usize, &str, &str)] = &[
             (0, "person", "person"),
             (1, "vehicle", "bicycle"),
@@ -158,39 +161,134 @@ impl YoloDetector {
             (16, "animal", "dog"),
         ];
 
+        let shape = view_arr.shape();
         let mut candidates = Vec::new();
 
-        for a in 0..num_anchors {
-            let mut best_conf = 0.0f32;
-            let mut best_target: Option<(usize, &str, &str)> = None;
+        // Support BOTH standard YOLOv8 [1, 84, 8400] AND transposed [1, 8400, 84] OR end2end [1, 300, 6]
+        if shape.len() == 3 && shape[1] >= 24 && shape[2] > shape[1] {
+            // Format A: [1, 84, 8400]
+            let num_anchors = shape[2];
+            for a in 0..num_anchors {
+                let mut best_conf = 0.0f32;
+                let mut best_target: Option<(usize, &str, &str)> = None;
 
-            for &(cid, cat, lbl) in target_classes {
-                if 4 + cid < shape[1] {
-                    let score = view_arr[[0, 4 + cid, a]];
-                    if score > best_conf {
-                        best_conf = score;
-                        best_target = Some((cid, cat, lbl));
+                for &(cid, cat, lbl) in target_classes {
+                    if 4 + cid < shape[1] {
+                        let score = view_arr[[0, 4 + cid, a]];
+                        if score > best_conf {
+                            best_conf = score;
+                            best_target = Some((cid, cat, lbl));
+                        }
+                    }
+                }
+
+                if best_conf >= conf_threshold {
+                    if let Some((cid, cat, lbl)) = best_target {
+                        let mut cx = view_arr[[0, 0, a]];
+                        let mut cy = view_arr[[0, 1, a]];
+                        let mut bw = view_arr[[0, 2, a]];
+                        let mut bh = view_arr[[0, 3, a]];
+                        if cx > 1.5 || bw > 1.5 {
+                            cx /= 640.0;
+                            cy /= 640.0;
+                            bw /= 640.0;
+                            bh /= 640.0;
+                        }
+                        let x = (cx - bw * 0.5).clamp(0.0, 1.0) as f64;
+                        let y = (cy - bh * 0.5).clamp(0.0, 1.0) as f64;
+                        let w = (bw as f64).clamp(0.01, 1.0 - x);
+                        let h = (bh as f64).clamp(0.01, 1.0 - y);
+
+                        candidates.push(DetectedObject {
+                            class_id: cid,
+                            category: cat.to_string(),
+                            label: lbl.to_string(),
+                            confidence: best_conf,
+                            x,
+                            y,
+                            w,
+                            h,
+                            lens: lens_id,
+                        });
                     }
                 }
             }
+        } else if shape.len() == 3 && shape[2] >= 24 && shape[1] > shape[2] {
+            // Format B: Transposed [1, 8400, 84]
+            let num_anchors = shape[1];
+            for a in 0..num_anchors {
+                let mut best_conf = 0.0f32;
+                let mut best_target: Option<(usize, &str, &str)> = None;
 
-            if best_conf >= conf_threshold {
-                if let Some((cid, cat, lbl)) = best_target {
-                    let cx = view_arr[[0, 0, a]] / 640.0;
-                    let cy = view_arr[[0, 1, a]] / 640.0;
-                    let bw = view_arr[[0, 2, a]] / 640.0;
-                    let bh = view_arr[[0, 3, a]] / 640.0;
+                for &(cid, cat, lbl) in target_classes {
+                    if 4 + cid < shape[2] {
+                        let score = view_arr[[0, a, 4 + cid]];
+                        if score > best_conf {
+                            best_conf = score;
+                            best_target = Some((cid, cat, lbl));
+                        }
+                    }
+                }
 
-                    let x = (cx - bw * 0.5).clamp(0.0, 1.0) as f64;
-                    let y = (cy - bh * 0.5).clamp(0.0, 1.0) as f64;
-                    let w = (bw as f64).clamp(0.01, 1.0 - x);
-                    let h = (bh as f64).clamp(0.01, 1.0 - y);
+                if best_conf >= conf_threshold {
+                    if let Some((cid, cat, lbl)) = best_target {
+                        let mut cx = view_arr[[0, a, 0]];
+                        let mut cy = view_arr[[0, a, 1]];
+                        let mut bw = view_arr[[0, a, 2]];
+                        let mut bh = view_arr[[0, a, 3]];
+                        if cx > 1.5 || bw > 1.5 {
+                            cx /= 640.0;
+                            cy /= 640.0;
+                            bw /= 640.0;
+                            bh /= 640.0;
+                        }
+                        let x = (cx - bw * 0.5).clamp(0.0, 1.0) as f64;
+                        let y = (cy - bh * 0.5).clamp(0.0, 1.0) as f64;
+                        let w = (bw as f64).clamp(0.01, 1.0 - x);
+                        let h = (bh as f64).clamp(0.01, 1.0 - y);
 
+                        candidates.push(DetectedObject {
+                            class_id: cid,
+                            category: cat.to_string(),
+                            label: lbl.to_string(),
+                            confidence: best_conf,
+                            x,
+                            y,
+                            w,
+                            h,
+                            lens: lens_id,
+                        });
+                    }
+                }
+            }
+        } else if shape.len() == 3 && shape[2] == 6 {
+            // Format C: End-to-End NMS [1, N, 6] -> [x1, y1, x2, y2, score, class_id]
+            for a in 0..shape[1] {
+                let score = view_arr[[0, a, 4]];
+                if score < conf_threshold {
+                    continue;
+                }
+                let cid = view_arr[[0, a, 5]] as usize;
+                if let Some(&(_, cat, lbl)) = target_classes.iter().find(|&&(c, _, _)| c == cid) {
+                    let mut x1 = view_arr[[0, a, 0]];
+                    let mut y1 = view_arr[[0, a, 1]];
+                    let mut x2 = view_arr[[0, a, 2]];
+                    let mut y2 = view_arr[[0, a, 3]];
+                    if x2 > 1.5 || y2 > 1.5 {
+                        x1 /= 640.0;
+                        y1 /= 640.0;
+                        x2 /= 640.0;
+                        y2 /= 640.0;
+                    }
+                    let x = x1.clamp(0.0, 1.0) as f64;
+                    let y = y1.clamp(0.0, 1.0) as f64;
+                    let w = ((x2 - x1) as f64).clamp(0.01, 1.0 - x);
+                    let h = ((y2 - y1) as f64).clamp(0.01, 1.0 - y);
                     candidates.push(DetectedObject {
                         class_id: cid,
                         category: cat.to_string(),
                         label: lbl.to_string(),
-                        confidence: best_conf,
+                        confidence: score,
                         x,
                         y,
                         w,

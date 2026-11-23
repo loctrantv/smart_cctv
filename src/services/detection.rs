@@ -275,23 +275,20 @@ impl DetectionEngine {
         let tripwires: Vec<TripwireLine> =
             serde_json::from_str(&camera.tripwire_config).unwrap_or_default();
 
-        // 2. Fast Luma Frame-Differencing Motion Gate in RAM (< 0.15ms)
-        let motion_diff_score = compute_frame_motion_diff(&dyn_img, prev_gray_thumb, &zones);
+        // 2. Fast Luma Frame-Differencing + Motion Centroid Bounding Box in RAM (< 0.15ms)
+        let (motion_diff_score, motion_bbox) =
+            compute_frame_motion_diff(&dyn_img, prev_gray_thumb, &zones);
 
         // Cooldown 4s between saving DB/disk snapshots on same camera,
-        // while still running YOLOv8n below if motion is present so Live Stream HUD boxes update smoothly!
+        // while still running YOLOv8n below so Live Stream HUD boxes update smoothly!
         let can_save_event = last_event_time.elapsed() >= Duration::from_secs(4);
-
-        // If frame is static (< 0.8% pixel change in active zones), clear live boxes and skip neural inference
-        if motion_diff_score < 0.008 {
-            return;
-        }
 
         let conf_thresh = self
             .db
-            .get_setting("detection.confidence_threshold", "0.45")
+            .get_setting("detection.confidence_threshold", "0.35")
             .parse::<f32>()
-            .unwrap_or(0.45);
+            .unwrap_or(0.35)
+            .clamp(0.15, 0.90);
 
         let mut triggered_events: Vec<(
             String,
@@ -304,7 +301,8 @@ impl DetectionEngine {
         let mut live_boxes_json = Vec::new();
 
         // 3. YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
-        if self.yolo.is_loaded() {
+        // Always run YOLO if loaded when any slight change (> 0.15%) occurs OR periodically
+        if self.yolo.is_loaded() && motion_diff_score >= 0.0015 {
             let detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
 
             // Evaluate ByteTrack Tripwire Line Crossing & Zone Intrusion / Loitering
@@ -423,17 +421,46 @@ impl DetectionEngine {
                 "timestamp": crate::auth::now_ms(),
                 "boxes": live_boxes_json
             }));
-        } else if motion_diff_score >= 0.035 {
-            // Pure Pixel Frame-Differencing motion event if YOLOv8n model is not yet downloaded
-            let conf = (motion_diff_score * 8.0).clamp(0.5, 0.98);
-            triggered_events.push((
-                "motion".to_string(),
-                format!("Chuyển động ({:.1}%)", motion_diff_score * 100.0),
-                conf,
-                None,
-                (0.0, 0.0, 0.0, 0.0),
-                "{}".to_string(),
-            ));
+        }
+
+        // Fallback to Sensitive Pixel-Motion Bounding Box when YOLO is not yet downloaded
+        // OR when movement occurs at a distance/angle where YOLO score is below threshold
+        if triggered_events.is_empty() && motion_diff_score >= 0.004 {
+            if let Some((mx, my, mw, mh, lens_id)) = motion_bbox {
+                let conf = (motion_diff_score * 25.0).clamp(0.55, 0.98);
+                let lens_tag = if lens_id == 1 {
+                    "Chuyển động (Mắt 1)"
+                } else {
+                    "Chuyển động (Mắt 2)"
+                };
+
+                live_boxes_json.push(json!({
+                    "type": "motion",
+                    "label": lens_tag,
+                    "confidence": conf,
+                    "x": mx,
+                    "y": my,
+                    "w": mw,
+                    "h": mh,
+                    "lens": lens_id
+                }));
+
+                self.ws_hub.broadcast(json!({
+                    "type": "ai_detections",
+                    "camera_id": camera.id,
+                    "timestamp": crate::auth::now_ms(),
+                    "boxes": live_boxes_json
+                }));
+
+                triggered_events.push((
+                    "motion".to_string(),
+                    lens_tag.to_string(),
+                    conf,
+                    None,
+                    (mx, my, mw, mh),
+                    json!({ "lens": lens_id, "diff": motion_diff_score }).to_string(),
+                ));
+            }
         }
 
         if triggered_events.is_empty() || !can_save_event {
@@ -703,34 +730,60 @@ fn draw_ai_bounding_box(
     }
 }
 
-/// Fast Frame-Differencing motion energy detector in RAM (< 0.15ms)
+/// Fast Frame-Differencing motion energy & Bounding Box clustering in RAM (< 0.15ms)
+/// Uses an 8:9 dual-lens resolution (160x180) so both Top Lens (0..90) and Bottom Lens (90..180)
+/// have crisp spatial resolution and returns the tight bounding box (x, y, w, h, lens_id) of moving pixels!
 fn compute_frame_motion_diff(
     dyn_img: &DynamicImage,
     prev_gray: &mut Option<Vec<u8>>,
     zones: &[DetectionZone],
-) -> f64 {
+) -> (f64, Option<(f64, f64, f64, f64, u8)>) {
+    let gw = 160usize;
+    let gh = 180usize;
     let small = dyn_img
-        .resize_exact(160, 90, FilterType::Nearest)
+        .resize_exact(gw as u32, gh as u32, FilterType::Triangle)
         .to_luma8();
     let curr: Vec<u8> = small.into_raw();
 
     let mut changed = 0usize;
     let mut total_checked = 0usize;
+    let mut min_x = gw;
+    let mut max_x = 0usize;
+    let mut min_y = gh;
+    let mut max_y = 0usize;
 
     if let Some(prev) = prev_gray.as_ref() {
         if prev.len() == curr.len() {
-            for y in 0..90 {
-                for x in 0..160 {
-                    let nx = x as f64 / 160.0;
-                    let ny = y as f64 / 90.0;
+            // Ignore top 6% and bottom 6% of each lens where camera OSD clock/text ticks every second
+            for y in 0..gh {
+                let ny = y as f64 / gh as f64;
+                let in_osd_band = (ny < 0.055) || (ny > 0.46 && ny < 0.555) || (ny > 0.96);
+                if in_osd_band {
+                    continue;
+                }
+
+                for x in 0..gw {
+                    let nx = x as f64 / gw as f64;
                     if !is_inside_zones(nx, ny, zones) {
                         continue;
                     }
                     total_checked += 1;
-                    let idx = y * 160 + x;
+                    let idx = y * gw + x;
                     let diff = (curr[idx] as i32 - prev[idx] as i32).abs();
-                    if diff > 24 {
+                    if diff > 18 {
                         changed += 1;
+                        if x < min_x {
+                            min_x = x;
+                        }
+                        if x > max_x {
+                            max_x = x;
+                        }
+                        if y < min_y {
+                            min_y = y;
+                        }
+                        if y > max_y {
+                            max_y = y;
+                        }
                     }
                 }
             }
@@ -738,11 +791,19 @@ fn compute_frame_motion_diff(
     }
 
     *prev_gray = Some(curr);
-    if total_checked == 0 {
-        0.0
-    } else {
-        changed as f64 / total_checked as f64
+    if total_checked == 0 || changed < 8 {
+        return (0.0, None);
     }
+
+    let score = changed as f64 / total_checked as f64;
+    let bx = (min_x as f64 / gw.max(1) as f64).clamp(0.0, 0.95);
+    let by = (min_y as f64 / gh as f64).clamp(0.0, 0.95);
+    let bw = ((max_x.saturating_sub(min_x) as f64 / gw as f64) + 0.03).clamp(0.05, 1.0 - bx);
+    let bh = ((max_y.saturating_sub(min_y) as f64 / gh as f64) + 0.03).clamp(0.05, 1.0 - by);
+    let center_y = by + bh * 0.5;
+    let lens_id = if center_y < 0.5 { 1 } else { 2 };
+
+    (score, Some((bx, by, bw, bh, lens_id)))
 }
 
 async fn capture_rtsp_jpeg_in_memory(rtsp_url: &str) -> Option<Vec<u8>> {
