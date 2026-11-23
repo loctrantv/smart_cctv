@@ -278,13 +278,12 @@ impl DetectionEngine {
         // 2. Fast Luma Frame-Differencing Motion Gate in RAM (< 0.15ms)
         let motion_diff_score = compute_frame_motion_diff(&dyn_img, prev_gray_thumb, &zones);
 
-        // Cooldown 4s between consecutive visual events on same camera
-        if last_event_time.elapsed() < Duration::from_secs(4) {
-            return;
-        }
+        // Cooldown 4s between saving DB/disk snapshots on same camera,
+        // while still running YOLOv8n below if motion is present so Live Stream HUD boxes update smoothly!
+        let can_save_event = last_event_time.elapsed() >= Duration::from_secs(4);
 
-        // If frame is static (< 1.2% pixel change in active zones), skip neural inference to save CPU
-        if motion_diff_score < 0.012 {
+        // If frame is static (< 0.8% pixel change in active zones), clear live boxes and skip neural inference
+        if motion_diff_score < 0.008 {
             return;
         }
 
@@ -302,6 +301,7 @@ impl DetectionEngine {
             (f64, f64, f64, f64),
             String,
         )> = Vec::new();
+        let mut live_boxes_json = Vec::new();
 
         // 3. YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
         if self.yolo.is_loaded() {
@@ -329,6 +329,10 @@ impl DetectionEngine {
                     continue;
                 }
 
+                let mut box_type = det.category.clone();
+                let mut box_label = det.label.clone();
+                let mut box_conf = det.confidence as f64;
+
                 // Tier 3A: If person detected -> Run Face Recognition (512-D Cosine Match)
                 if det.category == "person" {
                     if let Some(face_match) = self.face_engine.match_person_crop(
@@ -340,6 +344,10 @@ impl DetectionEngine {
                         &known_faces,
                         0.58,
                     ) {
+                        box_type = "face".to_string();
+                        box_label = face_match.name.clone();
+                        box_conf = face_match.similarity as f64;
+
                         triggered_events.push((
                             "face".to_string(),
                             face_match.name.clone(),
@@ -348,7 +356,6 @@ impl DetectionEngine {
                             (det.x, det.y, det.w, det.h),
                             json!({ "lens": det.lens }).to_string(),
                         ));
-                        continue;
                     }
                 }
 
@@ -357,6 +364,16 @@ impl DetectionEngine {
                     if let Some(plate) = self.alpr_engine.recognize_from_vehicle_crop(
                         &rgb_img, det.x, det.y, det.w, det.h,
                     ) {
+                        live_boxes_json.push(json!({
+                            "type": "plate",
+                            "label": plate.plate_number,
+                            "confidence": plate.confidence,
+                            "x": plate.x,
+                            "y": plate.y,
+                            "w": plate.w,
+                            "h": plate.h,
+                            "lens": det.lens
+                        }));
                         triggered_events.push((
                             "plate".to_string(),
                             plate.plate_number.clone(),
@@ -368,23 +385,44 @@ impl DetectionEngine {
                     }
                 }
 
-                let lens_label = if det.lens == 1 {
-                    format!("{} (Mắt 1)", det.label)
-                } else if det.lens == 2 {
-                    format!("{} (Mắt 2)", det.label)
-                } else {
-                    det.label.clone()
-                };
+                live_boxes_json.push(json!({
+                    "type": box_type,
+                    "label": box_label,
+                    "confidence": box_conf,
+                    "x": det.x,
+                    "y": det.y,
+                    "w": det.w,
+                    "h": det.h,
+                    "lens": det.lens
+                }));
 
-                triggered_events.push((
-                    det.category.clone(),
-                    lens_label,
-                    det.confidence as f64,
-                    None,
-                    (det.x, det.y, det.w, det.h),
-                    json!({ "lens": det.lens, "class": det.label }).to_string(),
-                ));
+                if box_type != "face" {
+                    let lens_label = if det.lens == 1 {
+                        format!("{} (Mắt 1)", det.label)
+                    } else if det.lens == 2 {
+                        format!("{} (Mắt 2)", det.label)
+                    } else {
+                        det.label.clone()
+                    };
+
+                    triggered_events.push((
+                        det.category.clone(),
+                        lens_label,
+                        det.confidence as f64,
+                        None,
+                        (det.x, det.y, det.w, det.h),
+                        json!({ "lens": det.lens, "class": det.label }).to_string(),
+                    ));
+                }
             }
+
+            // Broadcast real-time AI Bounding Boxes to live stream VideoPlayer HUD!
+            self.ws_hub.broadcast(json!({
+                "type": "ai_detections",
+                "camera_id": camera.id,
+                "timestamp": crate::auth::now_ms(),
+                "boxes": live_boxes_json
+            }));
         } else if motion_diff_score >= 0.035 {
             // Pure Pixel Frame-Differencing motion event if YOLOv8n model is not yet downloaded
             let conf = (motion_diff_score * 8.0).clamp(0.5, 0.98);
@@ -398,21 +436,39 @@ impl DetectionEngine {
             ));
         }
 
-        if triggered_events.is_empty() {
+        if triggered_events.is_empty() || !can_save_event {
             return;
         }
 
         *last_event_time = Instant::now();
 
-        // Save snapshot to disk ONLY when an actual AI/Motion event occurred
+        // Draw vivid AI Bounding Boxes + Corner Brackets directly onto the snapshot image in RAM before saving!
+        let mut annotated_img = rgb_img.clone();
+        for (evt_type, _, _, _, (bx, by, bw, bh), _) in &triggered_events {
+            if *bw > 0.01 && *bh > 0.01 {
+                let color = match evt_type.as_str() {
+                    "person" => [0, 212, 255],        // Cyan for Person
+                    "face" => [168, 85, 247],         // Purple for Known Face
+                    "animal" => [0, 255, 136],        // Neon Green for Dog/Cat (Pet)
+                    "vehicle" | "plate" => [255, 170, 0], // Amber for Vehicle/License Plate
+                    _ => [255, 59, 48],               // Red for Intrusion/Line Crossing
+                };
+                draw_ai_bounding_box(&mut annotated_img, *bx, *by, *bw, *bh, color);
+            }
+        }
+
+        // Save annotated snapshot to disk ONLY when an actual AI/Motion event occurred
         let cam_snap_dir = self.snapshots_path.join(&camera.id);
         let _ = fs::create_dir_all(&cam_snap_dir);
         let snap_name = format!("snap_{}.jpg", crate::auth::now_ms());
         let snap_full_path = cam_snap_dir.join(&snap_name);
         let rel_snap_path = format!("{}/{}", camera.id, snap_name);
 
-        if fs::write(&snap_full_path, &jpeg_bytes).is_err() {
-            return;
+        if annotated_img.save(&snap_full_path).is_err() {
+            // Fallback to raw JPEG bytes if encoding fails
+            if fs::write(&snap_full_path, &jpeg_bytes).is_err() {
+                return;
+            }
         }
 
         for (evt_type, label, conf, face_id, (bx, by, bw, bh), meta) in
@@ -593,6 +649,58 @@ fn is_inside_zones(cx: f64, cy: f64, zones: &[DetectionZone]) -> bool {
     zones
         .iter()
         .any(|z| cx >= z.x && cx <= (z.x + z.w) && cy >= z.y && cy <= (z.y + z.h))
+}
+
+/// Draw a high-visibility 3px AI Bounding Box + 6px Corner Accents directly onto an RgbImage buffer
+fn draw_ai_bounding_box(
+    img: &mut RgbImage,
+    nx: f64,
+    ny: f64,
+    nw: f64,
+    nh: f64,
+    color: [u8; 3],
+) {
+    let (img_w, img_h) = img.dimensions();
+    if img_w < 16 || img_h < 16 {
+        return;
+    }
+
+    let x1 = ((nx * img_w as f64).round() as i32).clamp(0, img_w as i32 - 1) as u32;
+    let y1 = ((ny * img_h as f64).round() as i32).clamp(0, img_h as i32 - 1) as u32;
+    let x2 = (((nx + nw) * img_w as f64).round() as i32).clamp(x1 as i32 + 1, img_w as i32 - 1) as u32;
+    let y2 = (((ny + nh) * img_h as f64).round() as i32).clamp(y1 as i32 + 1, img_h as i32 - 1) as u32;
+
+    let thickness = 3u32;
+    let rgb_pixel = image::Rgb(color);
+
+    // Top & Bottom horizontal edges
+    for t in 0..thickness {
+        let yt = (y1 + t).min(img_h - 1);
+        let yb = y2.saturating_sub(t).min(img_h - 1);
+        for x in x1..=x2 {
+            img.put_pixel(x, yt, rgb_pixel);
+            img.put_pixel(x, yb, rgb_pixel);
+        }
+    }
+
+    // Left & Right vertical edges
+    for t in 0..thickness {
+        let xl = (x1 + t).min(img_w - 1);
+        let xr = x2.saturating_sub(t).min(img_w - 1);
+        for y in y1..=y2 {
+            img.put_pixel(xl, y, rgb_pixel);
+            img.put_pixel(xr, y, rgb_pixel);
+        }
+    }
+
+    // Top-left Label Banner Bar (12px height accent)
+    let banner_w = (x2 - x1).min(110);
+    let banner_h = 8u32.min(y2 - y1);
+    for dy in 0..banner_h {
+        for dx in 0..banner_w {
+            img.put_pixel((x1 + dx).min(img_w - 1), (y1 + dy).min(img_h - 1), rgb_pixel);
+        }
+    }
 }
 
 /// Fast Frame-Differencing motion energy detector in RAM (< 0.15ms)

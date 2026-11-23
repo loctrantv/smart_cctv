@@ -362,6 +362,7 @@ export default function CameraView() {
             }
           >
             <VideoPlayer
+              cameraId={camera.id}
               streamId={camera.stream_id}
               streams={camera.streams}
               cameraName={camera.name}

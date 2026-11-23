@@ -3628,3 +3628,74 @@ a {
   border-radius: 8px;
   border: 1px solid rgba(0, 212, 255, 0.25);
 }
+
+
+/* ============================================================
+   LIVE STREAM REAL-TIME AI BOUNDING BOX HUD OVERLAY
+   ============================================================ */
+
+.vms-live-ai-box {
+  position: absolute;
+  border: 2px solid #00d4ff;
+  background: rgba(0, 212, 255, 0.08);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.45);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 18;
+  transition: all 180ms ease-out;
+}
+
+.vms-live-ai-box.type-person {
+  border-color: #00d4ff;
+  background: rgba(0, 212, 255, 0.08);
+}
+
+.vms-live-ai-box.type-face {
+  border-color: #a855f7;
+  background: rgba(168, 85, 247, 0.12);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.55);
+}
+
+.vms-live-ai-box.type-animal {
+  border-color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.45);
+}
+
+.vms-live-ai-box.type-vehicle,
+.vms-live-ai-box.type-plate {
+  border-color: #ffaa00;
+  background: rgba(255, 170, 0, 0.1);
+  box-shadow: 0 0 10px rgba(255, 170, 0, 0.45);
+}
+
+.vms-live-ai-label {
+  position: absolute;
+  top: -19px;
+  left: -2px;
+  padding: 1px 6px;
+  border-radius: 3px 3px 3px 0;
+  background: #00d4ff;
+  color: #000;
+  font-size: 0.64rem;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.vms-live-ai-box.type-face .vms-live-ai-label {
+  background: #a855f7;
+  color: #fff;
+}
+
+.vms-live-ai-box.type-animal .vms-live-ai-label {
+  background: #00ff88;
+  color: #000;
+}
+
+.vms-live-ai-box.type-vehicle .vms-live-ai-label,
+.vms-live-ai-box.type-plate .vms-live-ai-label {
+  background: #ffaa00;
+  color: #000;
+}

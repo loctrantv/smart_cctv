@@ -12,8 +12,10 @@ import {
   Rows,
   ArrowUpSquare,
   ArrowDownSquare,
+  Scan,
 } from 'lucide-react';
 import { resolveStreamUrl } from '../utils/api';
+import { useApp } from '../App';
 
 /**
  * VMS-grade VideoPlayer component with built-in support for Dual-Lens (8:9 stacked 2x16:9) cameras.
@@ -24,6 +26,7 @@ import { resolveStreamUrl } from '../utils/api';
  *   - 'bottom'  : Crop & zoom Bottom Lens (50% - 100% Y) into a standard 16:9 viewport
  */
 export default function VideoPlayer({
+  cameraId,
   streamId,
   streams,
   cameraName = '',
@@ -38,6 +41,7 @@ export default function VideoPlayer({
   lockStacked = false, // Used when drawing AI detection zones on raw 8:9 coordinates
   onAspectRatioChange,
 }) {
+  const { ws } = useApp() || {};
   const videoRef = useRef(null);
   const secondaryVideoRef = useRef(null);
   const pcRef = useRef(null);
@@ -48,6 +52,53 @@ export default function VideoPlayer({
   const [retryKey, setRetryKey] = useState(0);
   const [isMuted, setIsMuted] = useState(initialMuted);
   const [videoMeta, setVideoMeta] = useState({ width: 0, height: 0, isDualLens: true });
+  const [showAiBoxes, setShowAiBoxes] = useState(true);
+  const [liveBoxes, setLiveBoxes] = useState([]);
+
+  // Subscribe to real-time WebSocket AI bounding boxes (`ai_detections` and `detection_event`)
+  useEffect(() => {
+    if (!ws) return;
+    let clearTimer = null;
+
+    const scheduleClear = () => {
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(() => setLiveBoxes([]), 4500);
+    };
+
+    const unsub1 = ws.on('ai_detections', (payload) => {
+      if (cameraId && payload.camera_id !== cameraId) return;
+      if (Array.isArray(payload.boxes)) {
+        setLiveBoxes(payload.boxes);
+        scheduleClear();
+      }
+    });
+
+    const unsub2 = ws.on('detection_event', (payload) => {
+      const evt = payload?.event;
+      if (!evt) return;
+      if (cameraId && evt.camera_id !== cameraId) return;
+      if (evt.bbox_w > 0.01 && evt.bbox_h > 0.01) {
+        setLiveBoxes([
+          {
+            type: evt.type,
+            label: evt.label,
+            confidence: evt.confidence,
+            x: evt.bbox_x,
+            y: evt.bbox_y,
+            w: evt.bbox_w,
+            h: evt.bbox_h,
+          },
+        ]);
+        scheduleClear();
+      }
+    });
+
+    return () => {
+      if (clearTimer) clearTimeout(clearTimer);
+      unsub1();
+      unsub2();
+    };
+  }, [ws, cameraId]);
 
   // Uncontrolled or controlled lensMode
   const [internalLensMode, setInternalLensMode] = useState(defaultLensMode);
@@ -448,6 +499,53 @@ export default function VideoPlayer({
       ? `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`
       : undefined;
 
+  const renderLiveAiBoxes = (targetView) => {
+    if (!showAiBoxes || !liveBoxes || liveBoxes.length === 0) return null;
+    // targetView: 'stacked' (full 0..1 Y), 'top' (0..0.5 Y mapped to 0..1), 'bottom' (0.5..1.0 Y mapped to 0..1)
+    return liveBoxes
+      .map((b, idx) => {
+        if (!b || !b.w || !b.h) return null;
+        let rx = b.x;
+        let ry = b.y;
+        let rw = b.w;
+        let rh = b.h;
+
+        if (targetView === 'top') {
+          if (b.y + b.h * 0.5 > 0.52) return null; // Belongs to bottom lens
+          ry = b.y * 2;
+          rh = b.h * 2;
+        } else if (targetView === 'bottom') {
+          if (b.y + b.h * 0.5 < 0.48) return null; // Belongs to top lens
+          ry = (b.y - 0.5) * 2;
+          rh = b.h * 2;
+        }
+
+        const pctX = Math.max(0, Math.min(98, rx * 100));
+        const pctY = Math.max(0, Math.min(98, ry * 100));
+        const pctW = Math.max(2, Math.min(100 - pctX, rw * 100));
+        const pctH = Math.max(2, Math.min(100 - pctY, rh * 100));
+
+        return (
+          <div
+            key={idx}
+            className={`vms-live-ai-box type-${b.type || 'person'}`}
+            style={{
+              left: `${pctX}%`,
+              top: `${pctY}%`,
+              width: `${pctW}%`,
+              height: `${pctH}%`,
+            }}
+          >
+            <span className="vms-live-ai-label">
+              {b.label || b.type}{' '}
+              {b.confidence ? `${Math.round(b.confidence * 100)}%` : ''}
+            </span>
+          </div>
+        );
+      })
+      .filter(Boolean);
+  };
+
   return (
     <div
       className={`vms-player-root lens-mode-${activeLensMode} ${zoom > 1 ? 'is-zoomed' : ''}`}
@@ -498,6 +596,7 @@ export default function VideoPlayer({
                 playsInline
                 onLoadedMetadata={handleLoadedMetadata}
               />
+              {renderLiveAiBoxes('top')}
             </div>
           </div>
 
@@ -511,6 +610,7 @@ export default function VideoPlayer({
                 muted
                 playsInline
               />
+              {renderLiveAiBoxes('bottom')}
             </div>
           </div>
         </div>
@@ -530,6 +630,7 @@ export default function VideoPlayer({
               playsInline
               onLoadedMetadata={handleLoadedMetadata}
             />
+            {renderLiveAiBoxes(activeLensMode)}
           </div>
         </div>
       ) : (
@@ -545,6 +646,7 @@ export default function VideoPlayer({
             playsInline
             onLoadedMetadata={handleLoadedMetadata}
           />
+          {renderLiveAiBoxes('stacked')}
           {videoMeta.isDualLens && connected && (
             <div className="vms-dual-divider" title="Ranh giới 2 khung hình 16:9 (50%)" />
           )}
@@ -594,8 +696,20 @@ export default function VideoPlayer({
             </button>
           </div>
 
-          {/* Audio, Snapshot & Digital Zoom Controls */}
+          {/* Audio, Live AI Bounding Box HUD Toggle, Snapshot & Digital Zoom Controls */}
           <div className="vms-media-tools">
+            <button
+              type="button"
+              className={`vms-hud-icon-btn ${showAiBoxes ? 'active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAiBoxes((prev) => !prev);
+              }}
+              title={showAiBoxes ? 'Đang bật hiển thị khung nhận diện AI trên Live Stream' : 'Bật hiển thị khung nhận diện AI trên Live Stream'}
+            >
+              <Scan size={13} />
+            </button>
+
             <button
               type="button"
               className={`vms-hud-icon-btn ${!isMuted ? 'active' : ''}`}

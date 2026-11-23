@@ -450,6 +450,7 @@ export default function Dashboard() {
 
                     {/* Dual-Lens Smart Video Player */}
                     <VideoPlayer
+                      cameraId={camera.id}
                       streamId={camera.stream_id}
                       streams={camera.streams}
                       cameraName={camera.name}
