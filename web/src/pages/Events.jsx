@@ -21,12 +21,27 @@ import {
 } from 'lucide-react';
 import { useApp } from '../App';
 
-const typeIcons = { person: User, face: ScanFace, motion: Activity, sound_alert: Volume2 };
+const typeIcons = {
+  person: User,
+  face: ScanFace,
+  motion: Activity,
+  sound_alert: Volume2,
+  vehicle: Activity,
+  animal: Activity,
+  plate: Activity,
+  line_crossing: AlertTriangle,
+  intrusion: AlertTriangle,
+};
 const typeLabels = {
   person: 'Người',
   face: 'Khuôn mặt',
   motion: 'Chuyển động',
-  sound_alert: 'Âm thanh lạ',
+  sound_alert: 'Âm thanh AI',
+  vehicle: 'Phương tiện',
+  animal: 'Động vật',
+  plate: 'Biển số xe',
+  line_crossing: 'Vượt rào ảo',
+  intrusion: 'Xâm nhập vùng cấm',
 };
 
 /**
@@ -104,6 +119,7 @@ export default function Events() {
     camera_id: '',
     type: '',
     date: '',
+    search: '',
     limit: 48,
   });
   const [loading, setLoading] = useState(true);
@@ -129,6 +145,7 @@ export default function Events() {
       const params = { limit: filters.limit };
       if (filters.camera_id) params.camera_id = filters.camera_id;
       if (filters.type) params.type = filters.type;
+      if (filters.search && filters.search.trim()) params.search = filters.search.trim();
       if (filters.date) {
         params.start = `${filters.date} 00:00:00`;
         params.end = `${filters.date} 23:59:59`;
@@ -294,14 +311,28 @@ export default function Events() {
               value={filters.type}
               onChange={(e) => setFilters({ ...filters, type: e.target.value })}
             >
-              <option value="">Tất cả loại cảnh báo</option>
+              <option value="">Tất cả loại cảnh báo AI</option>
               <option value="motion">Chuyển động</option>
-              <option value="sound_alert">Âm thanh lạ</option>
-              <option value="person">Người</option>
-              <option value="face">Khuôn mặt</option>
+              <option value="person">Người (YOLOv8)</option>
+              <option value="face">Khuôn mặt (ArcFace 512-D)</option>
+              <option value="plate">Biển số xe (ALPR VN)</option>
+              <option value="vehicle">Phương tiện (Xe máy / Ô tô)</option>
+              <option value="animal">Động vật (Chó / Mèo)</option>
+              <option value="line_crossing">Vượt hàng rào ảo (ByteTrack)</option>
+              <option value="intrusion">Xâm nhập / Lảng vảng</option>
+              <option value="sound_alert">Âm thanh AI (YAMNet)</option>
             </select>
             <ChevronDown className="filter-chevron" />
           </div>
+
+          <input
+            type="text"
+            className="filter-select"
+            style={{ minWidth: 165, paddingRight: 10 }}
+            placeholder="Tìm biển số / tên / nhãn..."
+            value={filters.search}
+            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          />
 
           <div className="flex items-center gap-1">
             <input

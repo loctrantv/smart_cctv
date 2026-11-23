@@ -7,6 +7,8 @@ import {
   updateCamera,
   deleteCamera,
   changePassword,
+  getAiModels,
+  downloadAiModel,
 } from '../utils/api';
 import { useApp } from '../App';
 import {
@@ -29,6 +31,8 @@ export default function SettingsPage() {
   const [sysInfo, setSysInfo] = useState(null);
   const [settings, setSettings] = useState({});
   const [cameras, setCameras] = useState([]);
+  const [aiModels, setAiModels] = useState([]);
+  const [downloadingModel, setDownloadingModel] = useState({});
   const [activeTab, setActiveTab] = useState('general');
   const [saving, setSaving] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
@@ -53,6 +57,21 @@ export default function SettingsPage() {
     getSystemInfo().then(setSysInfo).catch(() => {});
     getSettings().then(setSettings).catch(() => {});
     getCameras().then(setCameras).catch(() => {});
+    getAiModels().then(setAiModels).catch(() => {});
+  };
+
+  const handleDownloadModel = async (modelId) => {
+    setDownloadingModel((prev) => ({ ...prev, [modelId]: true }));
+    try {
+      const res = await downloadAiModel(modelId);
+      showToast(res.message || 'Đã tải và kích hoạt model AI!');
+      const updated = await getAiModels();
+      setAiModels(updated);
+    } catch (err) {
+      alert('Lỗi tải model AI: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDownloadingModel((prev) => ({ ...prev, [modelId]: false }));
+    }
   };
 
   useEffect(() => {
@@ -414,73 +433,132 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── Motion Detection ── */}
+      {/* ── Motion & Multi-Tier ONNX AI Detection ── */}
       {activeTab === 'detection' && (
-        <div className="card">
-          <div className="card-header">
-            <span className="font-bold flex items-center gap-2">
-              <Activity size={16} style={{ color: 'var(--success)' }} /> Phát Hiện Chuyển Động AI
-            </span>
-          </div>
-          <div className="card-body" style={{ padding: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Chu kỳ quét khung hình (ms)</label>
-              <input
-                className="form-input"
-                type="number"
-                value={settings['detection.interval_ms'] || '3000'}
-                onChange={(e) =>
-                  setSettings({ ...settings, 'detection.interval_ms': e.target.value })
-                }
-              />
-              <div className="text-xs text-muted mt-2">
-                Giá trị nhỏ = phát hiện nhạy hơn (Khuyến nghị: 2000 – 4000 ms)
+        <div className="flex flex-col gap-3">
+          {/* ONNX AI Models Manager Card */}
+          <div className="card">
+            <div className="card-header">
+              <span className="font-bold flex items-center gap-2">
+                <Cpu size={16} style={{ color: 'var(--accent)' }} /> Quản Lý 5 Mô-Đun AI ONNX (Rust Engine)
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => getAiModels().then(setAiModels)}
+              >
+                <RefreshCw size={12} /> Kiểm tra
+              </button>
+            </div>
+            <div className="card-body" style={{ padding: 14 }}>
+              <p className="text-xs text-muted mb-3">
+                Tải và kích hoạt nóng (Hot-load) các mô hình mạng nơ-ron ONNX trực tiếp vào bộ nhớ
+                Rust mà không cần khởi động lại máy chủ:
+              </p>
+              <div className="flex flex-col gap-2">
+                {aiModels.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between gap-3 p-3"
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm">{m.name}</span>
+                        <span className="text-xs text-mono text-muted">({m.size_mb} MB)</span>
+                        {m.installed ? (
+                          <span className="vms-osd-badge ai">ĐÃ KÍCH HOẠT</span>
+                        ) : (
+                          <span className="vms-osd-badge rec">CHƯA TẢI</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted mt-1">{m.description}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${m.installed ? 'btn-secondary' : 'btn-primary'}`}
+                      disabled={downloadingModel[m.id]}
+                      onClick={() => handleDownloadModel(m.id)}
+                    >
+                      {downloadingModel[m.id]
+                        ? 'Đang tải...'
+                        : m.installed
+                        ? 'Cập nhật lại'
+                        : 'Tải & Kích hoạt'}
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
+          </div>
 
-            <div className="form-group mt-3">
-              <label className="form-label">Ngưỡng tin cậy (0.0 – 1.0)</label>
-              <input
-                className="form-input"
-                type="number"
-                step="0.1"
-                min="0"
-                max="1"
-                value={settings['detection.confidence_threshold'] || '0.5'}
-                onChange={(e) =>
-                  setSettings({ ...settings, 'detection.confidence_threshold': e.target.value })
-                }
-              />
+          <div className="card">
+            <div className="card-header">
+              <span className="font-bold flex items-center gap-2">
+                <Activity size={16} style={{ color: 'var(--success)' }} /> Thông Số Quét & Ghi Hình Sự Kiện
+              </span>
             </div>
+            <div className="card-body" style={{ padding: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Chu kỳ quét khung hình (ms)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={settings['detection.interval_ms'] || '2500'}
+                  onChange={(e) =>
+                    setSettings({ ...settings, 'detection.interval_ms': e.target.value })
+                  }
+                />
+              </div>
 
-            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
+              <div className="form-group mt-3">
+                <label className="form-label">Ngưỡng tin cậy AI (0.0 – 1.0)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  step="0.05"
+                  min="0.1"
+                  max="1"
+                  value={settings['detection.confidence_threshold'] || '0.45'}
+                  onChange={(e) =>
+                    setSettings({ ...settings, 'detection.confidence_threshold': e.target.value })
+                  }
+                />
+              </div>
 
-            <div className="form-group">
-              <label className="form-label">Tự động ghi hình sự kiện khi phát hiện chuyển động</label>
-              <select
-                className="form-input"
-                value={settings['recording.on_motion_enabled'] || '0'}
-                onChange={(e) =>
-                  setSettings({ ...settings, 'recording.on_motion_enabled': e.target.value })
-                }
-              >
-                <option value="0">Tắt (Chỉ chụp ảnh Snapshot sự kiện)</option>
-                <option value="1">Bật (Tự động quay video MP4 khi có chuyển động)</option>
-              </select>
-            </div>
+              <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
 
-            <div className="form-group mt-3">
-              <label className="form-label">Thời lượng đoạn video sự kiện (giây)</label>
-              <input
-                className="form-input"
-                type="number"
-                min="5"
-                max="300"
-                value={settings['recording.on_motion_duration'] || '30'}
-                onChange={(e) =>
-                  setSettings({ ...settings, 'recording.on_motion_duration': e.target.value })
-                }
-              />
+              <div className="form-group">
+                <label className="form-label">Tự động ghi hình sự kiện khi phát hiện</label>
+                <select
+                  className="form-input"
+                  value={settings['recording.on_motion_enabled'] || '0'}
+                  onChange={(e) =>
+                    setSettings({ ...settings, 'recording.on_motion_enabled': e.target.value })
+                  }
+                >
+                  <option value="0">Tắt (Chỉ chụp ảnh Snapshot sự kiện)</option>
+                  <option value="1">Bật (Tự động quay video MP4 khi phát hiện)</option>
+                </select>
+              </div>
+
+              <div className="form-group mt-3">
+                <label className="form-label">Thời lượng đoạn video sự kiện (giây)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="5"
+                  max="300"
+                  value={settings['recording.on_motion_duration'] || '30'}
+                  onChange={(e) =>
+                    setSettings({ ...settings, 'recording.on_motion_duration': e.target.value })
+                  }
+                />
+              </div>
             </div>
           </div>
         </div>

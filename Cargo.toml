@@ -1,0 +1,53 @@
+[package]
+name = "smart-cctv-server"
+version = "2.0.0"
+edition = "2021"
+description = "Smart CCTV AI NVR Unified Backend Server in Rust (Axum + SQLite + ONNX Runtime)"
+
+[dependencies]
+# Web framework & async runtime
+axum = { version = "0.7", features = ["ws", "multipart", "macros"] }
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "set-header"] }
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database (Embedded SQLite with WAL support, zero external system dependencies)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP Client for go2rtc & Model Downloader
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# Image Processing, Multi-threading & ONNX AI Inference
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+rayon = "1.10"
+tract-onnx = "0.21"
+
+# Cryptography & Security (100% compatible with Node.js scrypt$salt$hash and HS256 JWT)
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2.6"
+base64 = "0.22"
+rand = "0.8"
+url = "2.5"
+urlencoding = "2.1"
+regex = "1.11"
+
+# Utilities & System Telemetry
+uuid = { version = "1.10", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sysinfo = "0.31"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

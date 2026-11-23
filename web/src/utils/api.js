@@ -101,9 +101,12 @@ export const updateFace = (id, formData) =>
     .then((r) => r.data);
 export const deleteFace = (id) => api.delete(`/faces/${id}`).then((r) => r.data);
 
-// System
+// System & AI Models
 export const getSystemInfo = () => api.get('/system/info').then((r) => r.data);
 export const getSettings = () => api.get('/system/settings').then((r) => r.data);
 export const updateSettings = (data) => api.put('/system/settings', data).then((r) => r.data);
+export const getAiModels = () => api.get('/system/models').then((r) => r.data);
+export const downloadAiModel = (modelId) =>
+  api.post(`/system/models/${encodeURIComponent(modelId)}/download`, {}, { timeout: 300000 }).then((r) => r.data);
 
 export default api;

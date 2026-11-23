@@ -9,11 +9,16 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'detection.confidence_threshold',
   'detection.person_enabled',
   'detection.face_enabled',
+  'detection.vehicle_enabled',
+  'detection.animal_enabled',
+  'detection.plate_enabled',
+  'detection.tripwire_enabled',
   'recording.segment_minutes',
   'recording.on_motion_enabled',
   'recording.on_motion_duration',
   'system.timezone',
   'sound.detection_enabled',
+  'sound.ai_yamnet_enabled',
   'sound.night_start',
   'sound.night_end',
   'sound.threshold_db',
@@ -150,12 +155,16 @@ function initDatabase(dbPath) {
     );
   `);
 
-  // Safe migration: add detection_zone to cameras if upgrading from older DB
+  // Safe migration: add detection_zone, tripwire_config, ai_tasks to cameras if upgrading from older DB
   try {
     db.exec("ALTER TABLE cameras ADD COLUMN detection_zone TEXT DEFAULT ''");
-  } catch {
-    // Column already exists
-  }
+  } catch {}
+  try {
+    db.exec("ALTER TABLE cameras ADD COLUMN tripwire_config TEXT DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE cameras ADD COLUMN ai_tasks TEXT DEFAULT 'motion,person,face,plate,sound'");
+  } catch {}
 
   // Seed initial admin user from environment variables if no user exists
   const existingUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;

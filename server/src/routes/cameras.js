@@ -123,6 +123,8 @@ router.put('/:id', async (req, res) => {
       location,
       notes,
       detection_zone,
+      tripwire_config,
+      ai_tasks,
     } = req.body || {};
 
     let validatedRtspUrl = null;
@@ -155,6 +157,14 @@ router.put('/:id', async (req, res) => {
         ? record_mode
         : null;
 
+    const nextTripwire =
+      tripwire_config !== undefined
+        ? typeof tripwire_config === 'string'
+          ? tripwire_config
+          : JSON.stringify(tripwire_config)
+        : null;
+    const nextAiTasks = typeof ai_tasks === 'string' ? ai_tasks.slice(0, 200) : null;
+
     req.db
       .prepare(`
         UPDATE cameras SET
@@ -167,6 +177,8 @@ router.put('/:id', async (req, res) => {
           location = COALESCE(?, location),
           notes = COALESCE(?, notes),
           detection_zone = COALESCE(?, detection_zone),
+          tripwire_config = COALESCE(?, tripwire_config),
+          ai_tasks = COALESCE(?, ai_tasks),
           updated_at = datetime('now')
         WHERE id = ?
       `)
@@ -180,6 +192,8 @@ router.put('/:id', async (req, res) => {
         nextLocation,
         nextNotes,
         validatedZone,
+        nextTripwire,
+        nextAiTasks,
         req.params.id
       );
 

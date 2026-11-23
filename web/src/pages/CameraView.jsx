@@ -25,6 +25,8 @@ import {
   AlertTriangle,
   Check,
   Trash2,
+  GitCommit,
+  Square,
 } from 'lucide-react';
 
 export default function CameraView() {
@@ -35,12 +37,13 @@ export default function CameraView() {
   const [cameraEvents, setCameraEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Dual-Lens view mode: default to 'split' (Side-by-Side 2x16:9) on wide desktop screens,
-  // automatically switches to 'stacked' (8:9 raw frame) when drawing AI Detection Zones!
   const [lensMode, setLensMode] = useState('split');
   const [showZoneConfig, setShowZoneConfig] = useState(false);
+  const [drawMode, setDrawMode] = useState('zone'); // 'zone' | 'tripwire'
   const [zones, setZones] = useState([]);
+  const [tripwires, setTripwires] = useState([]);
   const [activeZone, setActiveZone] = useState(null);
+  const [activeLine, setActiveLine] = useState(null);
   const [aspectRatio, setAspectRatio] = useState(8 / 9);
 
   const stageRef = useRef(null);
@@ -68,13 +71,23 @@ export default function CameraView() {
         } else {
           const parts = data.detection_zone.split(',').map(Number);
           if (parts.length === 4) {
-            setZones([{ x: parts[0], y: parts[1], w: parts[2], h: parts[3] }]);
+            setZones([{ x: parts[0], y: parts[1], w: parts[2], h: parts[3], loitering_seconds: 0 }]);
           } else {
             setZones([]);
           }
         }
       } else {
         setZones([]);
+      }
+
+      if (data.tripwire_config && data.tripwire_config.startsWith('[')) {
+        try {
+          setTripwires(JSON.parse(data.tripwire_config));
+        } catch {
+          setTripwires([]);
+        }
+      } else {
+        setTripwires([]);
       }
     } catch {
       navigate('/');
@@ -102,7 +115,20 @@ export default function CameraView() {
     const pos = getCoordinates(e, rect);
     setIsDrawing(true);
     setStartPos(pos);
-    setActiveZone({ x: pos.x, y: pos.y, w: 0.01, h: 0.01 });
+
+    if (drawMode === 'zone') {
+      setActiveZone({ x: pos.x, y: pos.y, w: 0.01, h: 0.01, loitering_seconds: 0 });
+    } else {
+      setActiveLine({
+        id: `tw_${Date.now()}`,
+        name: `Rào ảo #${tripwires.length + 1}`,
+        x1: pos.x,
+        y1: pos.y,
+        x2: pos.x,
+        y2: pos.y,
+        direction: 'both',
+      });
+    }
   };
 
   const handleMove = (e) => {
@@ -112,42 +138,59 @@ export default function CameraView() {
     const rect = stageRef.current.getBoundingClientRect();
     const pos = getCoordinates(e, rect);
 
-    const x = Math.min(startPos.x, pos.x);
-    const y = Math.min(startPos.y, pos.y);
-    const w = Math.max(0.01, Math.abs(startPos.x - pos.x));
-    const h = Math.max(0.01, Math.abs(startPos.y - pos.y));
-
-    setActiveZone({ x, y, w, h });
+    if (drawMode === 'zone') {
+      const x = Math.min(startPos.x, pos.x);
+      const y = Math.min(startPos.y, pos.y);
+      const w = Math.max(0.01, Math.abs(startPos.x - pos.x));
+      const h = Math.max(0.01, Math.abs(startPos.y - pos.y));
+      setActiveZone({ x, y, w, h, loitering_seconds: 0 });
+    } else if (activeLine) {
+      setActiveLine({ ...activeLine, x2: pos.x, y2: pos.y });
+    }
   };
 
   const handleEnd = () => {
-    if (isDrawing && activeZone && activeZone.w > 0.02 && activeZone.h > 0.02) {
-      setZones((prev) => [...prev, activeZone]);
+    if (isDrawing) {
+      if (drawMode === 'zone' && activeZone && activeZone.w > 0.02 && activeZone.h > 0.02) {
+        setZones((prev) => [...prev, activeZone]);
+      } else if (drawMode === 'tripwire' && activeLine) {
+        const dist = Math.hypot(activeLine.x2 - activeLine.x1, activeLine.y2 - activeLine.y1);
+        if (dist > 0.03) {
+          setTripwires((prev) => [...prev, activeLine]);
+        }
+      }
     }
     setIsDrawing(false);
     setStartPos(null);
     setActiveZone(null);
+    setActiveLine(null);
   };
 
-  const handleSaveZone = async () => {
+  const handleSaveZoneAndTripwires = async () => {
     try {
-      const zoneString = JSON.stringify(zones);
-      await updateCamera(camera.id, { detection_zone: zoneString });
+      await updateCamera(camera.id, {
+        detection_zone: JSON.stringify(zones),
+        tripwire_config: JSON.stringify(tripwires),
+      });
       setShowZoneConfig(false);
       const updated = await getCamera(id);
       setCamera(updated);
     } catch (err) {
-      alert('Không thể lưu cấu hình vùng quét: ' + (err.response?.data?.error || err.message));
+      alert('Không thể lưu cấu hình AI: ' + (err.response?.data?.error || err.message));
     }
   };
 
   const addPresetLensZone = (whichLens) => {
     if (whichLens === 'top') {
-      // Full Top Lens (0% -> 50% height)
-      setZones((prev) => [...prev, { x: 0.02, y: 0.02, w: 0.96, h: 0.46 }]);
+      setZones((prev) => [
+        ...prev,
+        { x: 0.02, y: 0.02, w: 0.96, h: 0.46, loitering_seconds: 0 },
+      ]);
     } else if (whichLens === 'bottom') {
-      // Full Bottom Lens (50% -> 100% height)
-      setZones((prev) => [...prev, { x: 0.02, y: 0.52, w: 0.96, h: 0.46 }]);
+      setZones((prev) => [
+        ...prev,
+        { x: 0.02, y: 0.52, w: 0.96, h: 0.46, loitering_seconds: 0 },
+      ]);
     }
   };
 
@@ -200,7 +243,6 @@ export default function CameraView() {
             )}
           </div>
 
-          {/* Quick Channel Switcher */}
           {allCameras.length > 1 && (
             <select
               className="vms-channel-select"
@@ -224,7 +266,6 @@ export default function CameraView() {
                 type="button"
                 className={`vms-strip-btn ${lensMode === 'split' ? 'active' : ''}`}
                 onClick={() => setLensMode('split')}
-                title="Tách Ngang 2 Mắt (Mắt 1 Trái - Mắt 2 Phải)"
               >
                 <Columns size={13} /> <span>Tách Ngang 2 Mắt</span>
               </button>
@@ -232,7 +273,6 @@ export default function CameraView() {
                 type="button"
                 className={`vms-strip-btn ${lensMode === 'stacked' ? 'active' : ''}`}
                 onClick={() => setLensMode('stacked')}
-                title="Kép Dọc nguyên bản (8:9)"
               >
                 <Rows size={13} /> <span>Kép Dọc (8:9)</span>
               </button>
@@ -293,7 +333,8 @@ export default function CameraView() {
             onClick={() => setShowZoneConfig(!showZoneConfig)}
             id="toggle-zone-config"
           >
-            <Settings size={14} /> {showZoneConfig ? 'Đóng Vẽ Vùng' : 'Vùng Quét AI'}
+            <Settings size={14} />{' '}
+            {showZoneConfig ? 'Đóng Vẽ Vùng / Rào Ảo' : 'Vùng Cấm & Hàng Rào Ảo'}
           </button>
 
           <button
@@ -308,7 +349,6 @@ export default function CameraView() {
 
       {/* Two-Column Workstation Content */}
       <div className="vms-workstation-body">
-        {/* Left Main Video Stage */}
         <div className="vms-workstation-stage">
           <div
             ref={stageRef}
@@ -333,10 +373,9 @@ export default function CameraView() {
               onAspectRatioChange={setAspectRatio}
             />
 
-            {/* Interactive Zone Drawing Overlay (Locked to raw 8:9 dual frame so coordinates match FFmpeg 100%) */}
+            {/* Interactive Zone & Virtual Tripwire Drawing Overlay */}
             {showZoneConfig && (
               <>
-                {/* 50% Dual-Lens Boundary Guide Line */}
                 <div className="vms-zone-lens-boundary">
                   <span className="lens-guide-top">▲ MẮT 1 (KHUNG TRÊN: 0% – 50%)</span>
                   <span className="lens-guide-bottom">▼ MẮT 2 (KHUNG DƯỚI: 50% – 100%)</span>
@@ -352,6 +391,44 @@ export default function CameraView() {
                   onTouchMove={handleMove}
                   onTouchEnd={handleEnd}
                 />
+
+                {/* SVG Overlay for Virtual Tripwire Lines (ByteTrack Line Crossing) */}
+                <svg
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    zIndex: 17,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {tripwires.map((tw) => (
+                    <g key={tw.id}>
+                      <line
+                        x1={`${tw.x1 * 100}%`}
+                        y1={`${tw.y1 * 100}%`}
+                        x2={`${tw.x2 * 100}%`}
+                        y2={`${tw.y2 * 100}%`}
+                        stroke="#00ff88"
+                        strokeWidth="3"
+                        strokeDasharray="6 4"
+                      />
+                      <circle cx={`${tw.x1 * 100}%`} cy={`${tw.y1 * 100}%`} r="5" fill="#00d4ff" />
+                      <circle cx={`${tw.x2 * 100}%`} cy={`${tw.y2 * 100}%`} r="5" fill="#ff3b30" />
+                    </g>
+                  ))}
+                  {isDrawing && activeLine && (
+                    <line
+                      x1={`${activeLine.x1 * 100}%`}
+                      y1={`${activeLine.y1 * 100}%`}
+                      x2={`${activeLine.x2 * 100}%`}
+                      y2={`${activeLine.y2 * 100}%`}
+                      stroke="#00d4ff"
+                      strokeWidth="3"
+                    />
+                  )}
+                </svg>
 
                 {zones.map((z, idx) => (
                   <div
@@ -376,6 +453,7 @@ export default function CameraView() {
                     </button>
                     <span className="vms-zone-label">
                       Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1' : 'Mắt 2'})
+                      {z.loitering_seconds > 0 ? ` · Lảng vảng ${z.loitering_seconds}s` : ''}
                     </span>
                   </div>
                 ))}
@@ -396,82 +474,172 @@ export default function CameraView() {
           </div>
         </div>
 
-        {/* Right Side Inspector Panel (Zone Editor + Channel Info + Camera Recent Events) */}
+        {/* Right Side Inspector Panel */}
         <aside className="vms-workstation-sidebar custom-scrollbar">
           {showZoneConfig ? (
-            <div className="card mb-3" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+            <div className="card mb-3" style={{ borderColor: 'var(--accent)' }}>
               <div className="card-header">
-                <span className="font-bold text-sm" style={{ color: 'var(--danger)' }}>
-                  Vẽ Vùng Quét AI (2 Mắt 8:9)
+                <span className="font-bold text-sm" style={{ color: 'var(--accent)' }}>
+                  Cấu Hình Vùng Cấm & Hàng Rào Ảo AI
                 </span>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setZones([])}
-                >
-                  <Trash2 size={12} /> Xóa hết
-                </button>
               </div>
               <div className="card-body" style={{ padding: 14 }}>
-                <p className="text-xs text-muted mb-3">
-                  Khung hình đã được chuyển về chế độ <strong>Kép Dọc (8:9)</strong> để khớp tọa độ
-                  với FFmpeg. Kéo chuột trực tiếp lên Mắt 1 (nửa trên) hoặc Mắt 2 (nửa dưới) để vẽ
-                  vùng quét.
-                </p>
-
-                <div className="flex gap-2 mb-3">
+                {/* Tool Selector: Zone vs Tripwire */}
+                <div className="vms-btn-group w-full mb-3">
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm flex-1"
-                    onClick={() => addPresetLensZone('top')}
+                    className={`vms-strip-btn flex-1 ${drawMode === 'zone' ? 'active' : ''}`}
+                    onClick={() => setDrawMode('zone')}
                   >
-                    + Chọn trọn Mắt 1
+                    <Square size={13} /> <span>Vẽ Vùng Quét / Lảng Vảng</span>
                   </button>
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm flex-1"
-                    onClick={() => addPresetLensZone('bottom')}
+                    className={`vms-strip-btn flex-1 ${drawMode === 'tripwire' ? 'active' : ''}`}
+                    onClick={() => setDrawMode('tripwire')}
                   >
-                    + Chọn trọn Mắt 2
+                    <GitCommit size={13} /> <span>Vẽ Hàng Rào Ảo (Line)</span>
                   </button>
                 </div>
 
-                <div className="text-xs font-bold mb-2">
-                  Danh sách vùng quét ({zones.length})
-                </div>
-                {zones.length === 0 ? (
-                  <div
-                    className="text-xs text-muted p-3 text-center"
-                    style={{
-                      background: 'var(--bg-input)',
-                      borderRadius: 6,
-                      border: '1px dashed var(--border)',
-                    }}
-                  >
-                    Chưa vẽ vùng nào (Mặc định quét toàn bộ cả 2 mắt camera).
-                  </div>
+                {drawMode === 'zone' ? (
+                  <>
+                    <p className="text-xs text-muted mb-3">
+                      Kéo chuột trên Mắt 1 hoặc Mắt 2 để khoanh vùng quét. Có thể đặt thời gian{' '}
+                      <strong>Lảng vảng (giây)</strong>: nếu đối tượng đứng trong vùng quá số giây
+                      này sẽ báo động Xâm nhập.
+                    </p>
+                    <div className="flex gap-2 mb-3">
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm flex-1"
+                        onClick={() => addPresetLensZone('top')}
+                      >
+                        + Chọn trọn Mắt 1
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm flex-1"
+                        onClick={() => addPresetLensZone('bottom')}
+                      >
+                        + Chọn trọn Mắt 2
+                      </button>
+                    </div>
+                  </>
                 ) : (
-                  <div className="flex flex-col gap-2">
-                    {zones.map((z, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2"
-                        style={{
-                          background: 'var(--bg-input)',
-                          borderRadius: 6,
-                          border: '1px solid var(--border)',
+                  <p className="text-xs text-muted mb-3">
+                    Kéo chuột để kẻ một vạch <strong>Hàng rào ảo (Điểm A xanh → Điểm B đỏ)</strong>.
+                    Thuật toán ByteTrack sẽ báo động khi Người hoặc Xe vượt qua vạch này.
+                  </p>
+                )}
+
+                {/* Zones List with Loitering Timer Input */}
+                <div className="text-xs font-bold mb-2 flex justify-between">
+                  <span>Vùng quét & Xâm nhập ({zones.length})</span>
+                  {zones.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs"
+                      style={{ color: 'var(--danger)', background: 'none', border: 'none', cursor: 'pointer' }}
+                      onClick={() => setZones([])}
+                    >
+                      Xóa hết vùng
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 mb-3">
+                  {zones.map((z, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between gap-2 p-2"
+                      style={{
+                        background: 'var(--bg-input)',
+                        borderRadius: 6,
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      <span className="text-xs font-bold">
+                        Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1' : 'Mắt 2'})
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-muted">Lảng vảng (s):</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="600"
+                          className="form-input"
+                          style={{ width: 58, padding: '2px 6px', fontSize: '0.75rem' }}
+                          value={z.loitering_seconds || 0}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            setZones((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, loitering_seconds: val } : item
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Tripwire Lines List with Direction Selector */}
+                <div className="text-xs font-bold mb-2 flex justify-between">
+                  <span>Hàng rào ảo ByteTrack ({tripwires.length})</span>
+                  {tripwires.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs"
+                      style={{ color: 'var(--danger)', background: 'none', border: 'none', cursor: 'pointer' }}
+                      onClick={() => setTripwires([])}
+                    >
+                      Xóa hết rào
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  {tripwires.map((tw, idx) => (
+                    <div
+                      key={tw.id}
+                      className="flex items-center justify-between gap-2 p-2"
+                      style={{
+                        background: 'var(--bg-input)',
+                        borderRadius: 6,
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      <span className="text-xs font-bold" style={{ color: 'var(--success)' }}>
+                        {tw.name}
+                      </span>
+                      <select
+                        className="filter-select"
+                        style={{ minWidth: 95, padding: '2px 6px', fontSize: '0.72rem' }}
+                        value={tw.direction}
+                        onChange={(e) => {
+                          const dir = e.target.value;
+                          setTripwires((prev) =>
+                            prev.map((item, i) => (i === idx ? { ...item, direction: dir } : item))
+                          );
                         }}
                       >
-                        <span className="text-xs font-bold">
-                          Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1 - Trên' : 'Mắt 2 - Dưới'})
-                        </span>
-                        <span className="text-xs text-mono text-muted">
-                          {Math.round(z.w * 100)}%×{Math.round(z.h * 100)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                        <option value="both">Cả 2 chiều</option>
+                        <option value="a_to_b">Chiều A → B</option>
+                        <option value="b_to_a">Chiều B → A</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        style={{ width: 22, height: 22, color: 'var(--danger)' }}
+                        onClick={() =>
+                          setTripwires((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
                 <div className="mt-4 flex justify-end gap-2">
                   <button
@@ -484,10 +652,10 @@ export default function CameraView() {
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
-                    onClick={handleSaveZone}
+                    onClick={handleSaveZoneAndTripwires}
                     id="save-zone-btn"
                   >
-                    <Check size={14} /> Lưu vùng quét
+                    <Check size={14} /> Lưu cấu hình AI
                   </button>
                 </div>
               </div>
@@ -497,7 +665,7 @@ export default function CameraView() {
           {/* Technical Channel Details Card */}
           <div className="card mb-3">
             <div className="card-header">
-              <span className="font-bold text-sm">Thông Số Kênh</span>
+              <span className="font-bold text-sm">Thông Số Kênh & AI</span>
             </div>
             <div className="card-body" style={{ padding: 14 }}>
               <div className="vms-kv-list">
@@ -510,9 +678,9 @@ export default function CameraView() {
                   <span className="text-xs text-mono">Dual-Lens (2×16:9 / 8:9)</span>
                 </div>
                 <div className="vms-kv-row">
-                  <span className="text-xs text-muted">Vùng quét AI</span>
+                  <span className="text-xs text-muted">Vùng cấm / Hàng rào ảo</span>
                   <span className="text-xs font-bold">
-                    {zones.length > 0 ? `${zones.length} vùng tùy chỉnh` : 'Toàn khung (2 mắt)'}
+                    {zones.length} vùng · {tripwires.length} rào ảo
                   </span>
                 </div>
                 <div className="vms-kv-row">
@@ -533,7 +701,9 @@ export default function CameraView() {
             </div>
             <div className="card-body" style={{ padding: 10 }}>
               {cameraEvents.length === 0 ? (
-                <p className="text-xs text-muted text-center p-4">Chưa có sự kiện nào trên kênh này</p>
+                <p className="text-xs text-muted text-center p-4">
+                  Chưa có sự kiện nào trên kênh này
+                </p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {cameraEvents.map((evt) => (
@@ -552,10 +722,9 @@ export default function CameraView() {
                         )}
                       </div>
                       <div className="vms-drawer-meta">
-                        <span className={`event-type ${evt.type}`}>
-                          {evt.type === 'sound_alert' ? 'Âm thanh lạ' : 'Chuyển động'}
-                        </span>
-                        <div className="text-xs text-mono text-muted mt-1">
+                        <span className={`event-type ${evt.type}`}>{evt.type}</span>
+                        <div className="text-xs font-bold truncate mt-0.5">{evt.label}</div>
+                        <div className="text-xs text-mono text-muted">
                           {evt.timestamp
                             ? new Date(
                                 evt.timestamp.includes('Z')
