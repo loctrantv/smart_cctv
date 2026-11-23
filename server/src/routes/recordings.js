@@ -107,29 +107,39 @@ router.get('/:id/stream', (req, res) => {
     const fileSize = stat.size;
     const range = req.headers.range;
 
+    // Prevent proxy buffering (Nginx/Cloudflare) and declare byte-range capability on both 200 and 206
+    const commonHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': 'video/mp4',
+      'X-Accel-Buffering': 'no',
+      'Cache-Control': 'private, max-age=3600',
+    };
+
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
       if (isNaN(start) || isNaN(end) || start >= fileSize || end >= fileSize || start > end) {
-        res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+        res.writeHead(416, {
+          ...commonHeaders,
+          'Content-Range': `bytes */${fileSize}`,
+        });
         return res.end();
       }
 
       const chunkSize = end - start + 1;
       const file = fs.createReadStream(filePath, { start, end });
       res.writeHead(206, {
+        ...commonHeaders,
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
-        'Content-Type': 'video/mp4',
       });
       file.pipe(res);
     } else {
       res.writeHead(200, {
+        ...commonHeaders,
         'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
       });
       fs.createReadStream(filePath).pipe(res);
     }

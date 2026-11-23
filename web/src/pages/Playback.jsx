@@ -136,16 +136,42 @@ export default function Playback() {
   const isDragging = useRef(false);
 
   // Sync secondary video element when in 'split' (Side-by-Side 2x16:9) mode
+  // Uses captureStream() from primary video whenever supported so the browser never downloads or seeks the MP4 twice!
   const syncSecondaryPlayback = useCallback(() => {
     const primary = videoRef.current;
     const secondary = secondaryVideoRef.current;
     if (lensMode !== 'split' || !primary || !secondary) return;
 
+    // 1. Prefer zero-overhead MediaStream cloning via captureStream()
+    const canCapture =
+      typeof primary.captureStream === 'function' ||
+      typeof primary.mozCaptureStream === 'function';
+
+    if (canCapture && primary.readyState >= 1) {
+      try {
+        if (!secondary.srcObject) {
+          const captured = primary.captureStream
+            ? primary.captureStream()
+            : primary.mozCaptureStream();
+          secondary.srcObject = captured;
+        }
+        if (!primary.paused && secondary.paused) {
+          secondary.play().catch(() => {});
+        } else if (primary.paused && !secondary.paused) {
+          secondary.pause();
+        }
+        return;
+      } catch {
+        // Fallback to URL sync below if captureStream fails
+      }
+    }
+
+    // 2. Fallback URL sync (when captureStream is unavailable)
     if (primary.src && secondary.src !== primary.src) {
       secondary.src = primary.src;
     }
     secondary.playbackRate = primary.playbackRate;
-    if (Math.abs(secondary.currentTime - primary.currentTime) > 0.35) {
+    if (!primary.seeking && Math.abs(secondary.currentTime - primary.currentTime) > 0.4) {
       secondary.currentTime = primary.currentTime;
     }
     if (!primary.paused && secondary.paused) {
@@ -241,21 +267,37 @@ export default function Playback() {
     return ticks;
   }, [timelineBounds]);
 
+  const applySeekToPrimary = useCallback((targetSeconds) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const safeSec = Math.max(0, targetSeconds);
+    setClipCurrentTime(safeSec);
+
+    if (v.readyState >= 1) {
+      seekTimeRef.current = null;
+      try {
+        v.currentTime = safeSec;
+      } catch {}
+      if (secondaryVideoRef.current && !secondaryVideoRef.current.srcObject) {
+        try {
+          secondaryVideoRef.current.currentTime = safeSec;
+        } catch {}
+      }
+    } else {
+      seekTimeRef.current = safeSec;
+    }
+  }, []);
+
   const playRecording = useCallback(
     (rec, seekSeconds = 0) => {
       const isSameVideo = currentVideoIdRef.current === rec.id;
       const streamUrl = getRecordingStreamUrl(rec.id);
 
       if (isSameVideo) {
+        applySeekToPrimary(seekSeconds);
         if (videoRef.current) {
-          videoRef.current.currentTime = seekSeconds;
           videoRef.current.playbackRate = speed;
           videoRef.current.play().catch(() => {});
-        }
-        if (secondaryVideoRef.current) {
-          secondaryVideoRef.current.currentTime = seekSeconds;
-          secondaryVideoRef.current.playbackRate = speed;
-          secondaryVideoRef.current.play().catch(() => {});
         }
         setPlaying(true);
         if (!currentRecording || currentRecording.id !== rec.id) {
@@ -269,6 +311,9 @@ export default function Playback() {
         setClipDuration(rec.duration_seconds || 0);
         seekTimeRef.current = seekSeconds;
         setTimeout(() => {
+          if (secondaryVideoRef.current) {
+            secondaryVideoRef.current.srcObject = null;
+          }
           if (videoRef.current) {
             videoRef.current.src = streamUrl;
             videoRef.current.muted = isMuted;
@@ -276,15 +321,10 @@ export default function Playback() {
             videoRef.current.playbackRate = speed;
             videoRef.current.play().catch(() => {});
           }
-          if (secondaryVideoRef.current) {
-            secondaryVideoRef.current.src = streamUrl;
-            secondaryVideoRef.current.playbackRate = speed;
-            secondaryVideoRef.current.play().catch(() => {});
-          }
         }, 50);
       }
     },
-    [speed, currentRecording, isMuted, volume]
+    [speed, currentRecording, isMuted, volume, applySeekToPrimary]
   );
 
   // Seamless auto-advance to next segment when current segment ends
@@ -329,6 +369,11 @@ export default function Playback() {
   const handleTimeUpdate = () => {
     const v = videoRef.current;
     if (!v || !currentRecording) return;
+
+    // Do not overwrite playhead with 0 while a pending initial seek or user scrub is active
+    if (v.seeking || (seekTimeRef.current !== null && seekTimeRef.current > 0)) {
+      return;
+    }
 
     if (!isScrubbingClipRef.current) {
       setClipCurrentTime(v.currentTime);
@@ -383,11 +428,7 @@ export default function Playback() {
     if (effectiveDur <= 0) return;
 
     const targetSec = pct * effectiveDur;
-    setClipCurrentTime(targetSec);
-    videoRef.current.currentTime = targetSec;
-    if (secondaryVideoRef.current) {
-      secondaryVideoRef.current.currentTime = targetSec;
-    }
+    applySeekToPrimary(targetSec);
   };
 
   const handleClipScrubStart = (e) => {
