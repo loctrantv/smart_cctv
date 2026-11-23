@@ -7,6 +7,7 @@ import {
   getMediaUrl,
 } from '../utils/api';
 import { format } from 'date-fns';
+import { TechSelect, TechDatePicker, useTechDialog } from '../components/TechUI';
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,7 +18,6 @@ import {
   SkipForward,
   Trash2,
   Image as ImageIcon,
-  ChevronDown,
   Camera,
   Columns,
   Rows,
@@ -97,6 +97,7 @@ function LazyThumb({ src, alt, width = 68, height = 42 }) {
 }
 
 export default function Playback() {
+  const { confirmDialog, showToast } = useTechDialog();
   const [cameras, setCameras] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState(null);
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -546,9 +547,17 @@ export default function Playback() {
   };
 
   const handleDeleteRecording = async (id) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa bản ghi này?')) return;
+    const ok = await confirmDialog({
+      title: 'XÓA ĐOẠN GHI HÌNH NVR',
+      message: 'Đoạn video MP4 này sẽ bị xóa vĩnh viễn khỏi ổ cứng lưu trữ. Bạn có chắc chắn muốn xóa?',
+      confirmText: 'Xóa vĩnh viễn',
+      cancelText: 'Giữ lại',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteRecording(id);
+      showToast('Đã xóa bản ghi thành công', 'success');
       if (currentRecording && currentRecording.id === id) {
         setCurrentRecording(null);
         setPlaying(false);
@@ -561,7 +570,10 @@ export default function Playback() {
           .catch(() => setTimeline({ recordings: [], events: [] }));
       }
     } catch (err) {
-      alert('Không thể xóa bản ghi: ' + (err.response?.data?.error || err.message));
+      showToast(
+        'Không thể xóa bản ghi: ' + (err.response?.data?.error || err.message),
+        'error'
+      );
     }
   };
 
@@ -828,27 +840,13 @@ export default function Playback() {
       {/* NVR Top Filter & Dual-Lens Mode Bar */}
       <div className="vms-control-strip mb-3" style={{ borderRadius: 'var(--radius-md)' }}>
         <div className="vms-strip-left">
-          <div className="flex items-center gap-2 text-muted">
-            <Camera size={16} />
-            <span className="text-xs font-bold uppercase">Kênh:</span>
-          </div>
-
-          <div className="filter-select-wrapper">
-            <select
-              className="filter-select"
-              value={selectedCamera?.id || ''}
-              onChange={(e) =>
-                setSelectedCamera(cameras.find((c) => c.id === e.target.value))
-              }
-            >
-              {cameras.map((cam) => (
-                <option key={cam.id} value={cam.id}>
-                  {cam.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="filter-chevron" />
-          </div>
+          <TechSelect
+            icon={Camera}
+            value={selectedCamera?.id || ''}
+            onChange={(val) => setSelectedCamera(cameras.find((c) => c.id === val))}
+            options={cameras.map((cam) => ({ value: cam.id, label: cam.name }))}
+            placeholder="Chọn kênh camera..."
+          />
 
           <div className="vms-divider" />
 
@@ -856,13 +854,7 @@ export default function Playback() {
             <button type="button" className="btn-icon btn-sm" onClick={() => changeDate(-1)}>
               <ChevronLeft size={14} />
             </button>
-            <input
-              type="date"
-              className="filter-select"
-              style={{ minWidth: 140, paddingRight: 10 }}
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-            />
+            <TechDatePicker value={selectedDate} onChange={setSelectedDate} />
             <button type="button" className="btn-icon btn-sm" onClick={() => changeDate(1)}>
               <ChevronRight size={14} />
             </button>

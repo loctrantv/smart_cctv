@@ -10,6 +10,7 @@ import {
   getMediaUrl,
 } from '../utils/api';
 import VideoPlayer from '../components/VideoPlayer';
+import { TechSelect, TechNumberInput, useTechDialog } from '../components/TechUI';
 import {
   ArrowLeft,
   Video,
@@ -27,11 +28,13 @@ import {
   Trash2,
   GitCommit,
   Square,
+  Camera,
 } from 'lucide-react';
 
 export default function CameraView() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { showToast } = useTechDialog();
   const [camera, setCamera] = useState(null);
   const [allCameras, setAllCameras] = useState([]);
   const [cameraEvents, setCameraEvents] = useState([]);
@@ -175,8 +178,12 @@ export default function CameraView() {
       setShowZoneConfig(false);
       const updated = await getCamera(id);
       setCamera(updated);
+      showToast('Đã lưu cấu hình Vùng cấm & Hàng rào ảo AI!', 'success');
     } catch (err) {
-      alert('Không thể lưu cấu hình AI: ' + (err.response?.data?.error || err.message));
+      showToast(
+        'Không thể lưu cấu hình AI: ' + (err.response?.data?.error || err.message),
+        'error'
+      );
     }
   };
 
@@ -244,17 +251,16 @@ export default function CameraView() {
           </div>
 
           {allCameras.length > 1 && (
-            <select
-              className="vms-channel-select"
+            <TechSelect
+              size="sm"
+              icon={Camera}
               value={camera.id}
-              onChange={(e) => navigate(`/camera/${e.target.value}`)}
-            >
-              {allCameras.map((c) => (
-                <option key={c.id} value={c.id}>
-                  Chuyển kênh: {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => navigate(`/camera/${val}`)}
+              options={allCameras.map((c) => ({
+                value: c.id,
+                label: `Kênh: ${c.name}`,
+              }))}
+            />
           )}
         </div>
 
@@ -562,20 +568,19 @@ export default function CameraView() {
                       <span className="text-xs font-bold">
                         Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1' : 'Mắt 2'})
                       </span>
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-muted">Lảng vảng (s):</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="600"
-                          className="form-input"
-                          style={{ width: 58, padding: '2px 6px', fontSize: '0.75rem' }}
+                      <div style={{ width: 150 }}>
+                        <TechNumberInput
+                          size="sm"
                           value={z.loitering_seconds || 0}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10) || 0;
+                          min={0}
+                          max={600}
+                          step={5}
+                          unit="s"
+                          onChange={(val) => {
+                            const num = parseInt(val, 10) || 0;
                             setZones((prev) =>
                               prev.map((item, i) =>
-                                i === idx ? { ...item, loitering_seconds: val } : item
+                                i === idx ? { ...item, loitering_seconds: num } : item
                               )
                             );
                           }}
@@ -613,21 +618,20 @@ export default function CameraView() {
                       <span className="text-xs font-bold" style={{ color: 'var(--success)' }}>
                         {tw.name}
                       </span>
-                      <select
-                        className="filter-select"
-                        style={{ minWidth: 95, padding: '2px 6px', fontSize: '0.72rem' }}
+                      <TechSelect
+                        size="sm"
                         value={tw.direction}
-                        onChange={(e) => {
-                          const dir = e.target.value;
+                        onChange={(dir) => {
                           setTripwires((prev) =>
                             prev.map((item, i) => (i === idx ? { ...item, direction: dir } : item))
                           );
                         }}
-                      >
-                        <option value="both">Cả 2 chiều</option>
-                        <option value="a_to_b">Chiều A → B</option>
-                        <option value="b_to_a">Chiều B → A</option>
-                      </select>
+                        options={[
+                          { value: 'both', label: 'Cả 2 chiều' },
+                          { value: 'a_to_b', label: 'Chiều A → B' },
+                          { value: 'b_to_a', label: 'Chiều B → A' },
+                        ]}
+                      />
                       <button
                         type="button"
                         className="btn-icon"

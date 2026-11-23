@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { getEvents, getEventStats, getCameras, getMediaUrl, deleteEvent, deleteEvents } from '../utils/api';
 import { format } from 'date-fns';
 import {
+  TechSelect,
+  TechDatePicker,
+  TechCheckbox,
+  useTechDialog,
+} from '../components/TechUI';
+import {
   AlertTriangle,
   User,
   ScanFace,
@@ -10,14 +16,14 @@ import {
   Filter,
   Trash2,
   Volume2,
-  ChevronDown,
   RefreshCw,
   LayoutGrid,
   List,
   Download,
   ExternalLink,
-  Calendar,
+  Search,
   Image as ImageIcon,
+  Camera,
 } from 'lucide-react';
 import { useApp } from '../App';
 
@@ -108,6 +114,7 @@ export function LazyEventImage({ src, alt, onClick, aspectRatio = '16/9' }) {
 }
 
 export default function Events() {
+  const { confirmDialog, showToast } = useTechDialog();
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState({ byType: [], recentCount: 0 });
   const [cameras, setCameras] = useState([]);
@@ -166,13 +173,21 @@ export default function Events() {
   };
 
   const handleDeleteEvent = async (id) => {
-    if (!confirm('Xóa sự kiện này? Ảnh chụp trên ổ đĩa sẽ bị xóa vĩnh viễn.')) return;
+    const ok = await confirmDialog({
+      title: 'XÓA SỰ KIỆN AI',
+      message: 'Sự kiện này và ảnh Snapshot trên ổ đĩa sẽ bị xóa vĩnh viễn. Bạn có chắc chắn?',
+      confirmText: 'Xóa sự kiện',
+      cancelText: 'Hủy',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteEvent(id);
+      showToast('Đã xóa sự kiện', 'success');
       fetchEvents();
       if (refreshGlobalStats) refreshGlobalStats();
     } catch (err) {
-      alert('Không thể xóa sự kiện: ' + (err.response?.data?.error || err.message));
+      showToast('Không thể xóa sự kiện: ' + (err.response?.data?.error || err.message), 'error');
     }
   };
 
@@ -198,15 +213,26 @@ export default function Events() {
   const handleBulkDelete = async () => {
     const count = selectedIds.size;
     if (count === 0) return;
-    if (!confirm(`Xóa ${count} sự kiện đã chọn? Ảnh chụp sẽ bị xóa vĩnh viễn.`)) return;
+    const ok = await confirmDialog({
+      title: `XÓA HÀNG LOẠT (${count} SỰ KIỆN)`,
+      message: `Toàn bộ ${count} sự kiện đã chọn và ảnh chụp liên quan sẽ bị xóa vĩnh viễn khỏi hệ thống.`,
+      confirmText: `Xóa ${count} sự kiện`,
+      cancelText: 'Hủy',
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
       await deleteEvents(Array.from(selectedIds));
+      showToast(`Đã xóa ${count} sự kiện thành công`, 'success');
       setSelectedIds(new Set());
       fetchEvents();
       if (refreshGlobalStats) refreshGlobalStats();
     } catch (err) {
-      alert('Không thể xóa các sự kiện: ' + (err.response?.data?.error || err.message));
+      showToast(
+        'Không thể xóa các sự kiện: ' + (err.response?.data?.error || err.message),
+        'error'
+      );
     }
   };
 
@@ -284,75 +310,54 @@ export default function Events() {
       {/* VMS Filter & Bulk Action Strip */}
       <div className="vms-control-strip mb-3" style={{ borderRadius: 'var(--radius-md)' }}>
         <div className="vms-strip-left">
-          <div className="flex items-center gap-1 text-muted">
-            <Filter size={15} />
-            <span className="text-xs font-bold uppercase hidden sm:inline">Lọc:</span>
-          </div>
-
-          <div className="filter-select-wrapper">
-            <select
-              className="filter-select"
-              value={filters.camera_id}
-              onChange={(e) => setFilters({ ...filters, camera_id: e.target.value })}
-            >
-              <option value="">Tất cả kênh camera</option>
-              {cameras.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="filter-chevron" />
-          </div>
-
-          <div className="filter-select-wrapper">
-            <select
-              className="filter-select"
-              value={filters.type}
-              onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-            >
-              <option value="">Tất cả loại cảnh báo AI</option>
-              <option value="motion">Chuyển động</option>
-              <option value="person">Người (YOLOv8)</option>
-              <option value="face">Khuôn mặt (ArcFace 512-D)</option>
-              <option value="plate">Biển số xe (ALPR VN)</option>
-              <option value="vehicle">Phương tiện (Xe máy / Ô tô)</option>
-              <option value="animal">Động vật (Chó / Mèo)</option>
-              <option value="line_crossing">Vượt hàng rào ảo (ByteTrack)</option>
-              <option value="intrusion">Xâm nhập / Lảng vảng</option>
-              <option value="sound_alert">Âm thanh AI (YAMNet)</option>
-            </select>
-            <ChevronDown className="filter-chevron" />
-          </div>
-
-          <input
-            type="text"
-            className="filter-select"
-            style={{ minWidth: 165, paddingRight: 10 }}
-            placeholder="Tìm biển số / tên / nhãn..."
-            value={filters.search}
-            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          <TechSelect
+            icon={Camera}
+            value={filters.camera_id}
+            onChange={(val) => setFilters({ ...filters, camera_id: val })}
+            options={[
+              { value: '', label: 'Tất cả kênh camera' },
+              ...cameras.map((c) => ({ value: c.id, label: c.name })),
+            ]}
           />
 
-          <div className="flex items-center gap-1">
+          <TechSelect
+            icon={Filter}
+            value={filters.type}
+            onChange={(val) => setFilters({ ...filters, type: val })}
+            options={[
+              { value: '', label: 'Tất cả loại cảnh báo AI' },
+              { value: 'motion', label: 'Chuyển động' },
+              { value: 'person', label: 'Người (YOLOv8)' },
+              { value: 'face', label: 'Khuôn mặt (ArcFace 512-D)' },
+              { value: 'plate', label: 'Biển số xe (ALPR VN)' },
+              { value: 'vehicle', label: 'Phương tiện (Xe máy / Ô tô)' },
+              { value: 'animal', label: 'Động vật (Chó / Mèo)' },
+              { value: 'line_crossing', label: 'Vượt hàng rào ảo (ByteTrack)' },
+              { value: 'intrusion', label: 'Xâm nhập / Lảng vảng' },
+              { value: 'sound_alert', label: 'Âm thanh AI (YAMNet)' },
+            ]}
+          />
+
+          <div className="tech-input-shell" style={{ minWidth: 185, height: 32 }}>
+            <span className="tech-input-icon-left">
+              <Search size={13} />
+            </span>
             <input
-              type="date"
-              className="filter-select"
-              style={{ minWidth: 135, paddingRight: 10 }}
-              value={filters.date}
-              onChange={(e) => setFilters({ ...filters, date: e.target.value })}
-              title="Lọc theo ngày"
+              type="text"
+              className="tech-input-control has-left-icon"
+              style={{ height: 32, fontSize: '0.78rem' }}
+              placeholder="Tìm biển số / tên / nhãn..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
             />
-            {filters.date && (
-              <button
-                type="button"
-                className="vms-strip-btn"
-                onClick={() => setFilters({ ...filters, date: '' })}
-              >
-                Tất cả ngày
-              </button>
-            )}
           </div>
+
+          <TechDatePicker
+            value={filters.date}
+            onChange={(val) => setFilters({ ...filters, date: val })}
+            placeholder="Tất cả ngày"
+            allowClear
+          />
 
           <button
             type="button"
@@ -367,15 +372,11 @@ export default function Events() {
 
         <div className="vms-strip-right">
           {events.length > 0 && (
-            <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={handleToggleSelectAll}
-                style={{ width: 15, height: 15, cursor: 'pointer' }}
-              />
-              <span>Chọn tất cả ({events.length})</span>
-            </label>
+            <TechCheckbox
+              checked={allSelected}
+              onChange={handleToggleSelectAll}
+              label={`Chọn tất cả (${events.length})`}
+            />
           )}
 
           {selectedIds.size > 0 && (
@@ -433,12 +434,12 @@ export default function Events() {
                 id={`event-${evt.id}`}
               >
                 <div className="vms-event-grid-thumb-wrap">
-                  <input
-                    type="checkbox"
-                    className="vms-event-checkbox-overlay"
-                    checked={isSelected}
-                    onChange={() => handleToggleSelect(evt.id)}
-                  />
+                  <div className="vms-event-checkbox-overlay">
+                    <TechCheckbox
+                      checked={isSelected}
+                      onChange={() => handleToggleSelect(evt.id)}
+                    />
+                  </div>
 
                   <span className={`vms-event-badge-overlay ${evt.type}`}>
                     <Icon size={11} />
@@ -524,11 +525,9 @@ export default function Events() {
                 style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
               >
                 <div className="pl-1 flex items-center shrink-0">
-                  <input
-                    type="checkbox"
+                  <TechCheckbox
                     checked={selectedIds.has(evt.id)}
                     onChange={() => handleToggleSelect(evt.id)}
-                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                   />
                 </div>
                 <div className="event-thumbnail">

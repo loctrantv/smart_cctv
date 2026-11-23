@@ -2,6 +2,7 @@ import React, { useState, createContext, useContext, useEffect, useCallback } fr
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import { logout as apiLogout, getCameras } from './utils/api';
+import { TechDialogProvider, useTechDialog } from './components/TechUI';
 import {
   LayoutGrid,
   PlayCircle,
@@ -38,6 +39,15 @@ export const AppContext = createContext();
 export const useApp = () => useContext(AppContext);
 
 export default function App() {
+  return (
+    <TechDialogProvider>
+      <AppInner />
+    </TechDialogProvider>
+  );
+}
+
+function AppInner() {
+  const { confirmDialog, showToast } = useTechDialog();
   const [token, setToken] = useState(localStorage.getItem('smart_cctv_token') || '');
   const [user, setUser] = useState(() => {
     try {
@@ -64,7 +74,6 @@ export default function App() {
   const ws = useWebSocket(token);
   const location = useLocation();
 
-  // Live 1-second digital clock for VMS Control Room Header
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(timer);
@@ -118,7 +127,6 @@ export default function App() {
     };
   }, [ws, refreshGlobalStats]);
 
-  // Browser Fullscreen + TV Wall Mode sync
   const toggleTvMode = () => {
     if (!tvMode) {
       setTvMode(true);
@@ -152,10 +160,18 @@ export default function App() {
     localStorage.setItem('smart_cctv_user', JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
+    showToast(`Xin chào ${newUser?.username || 'Admin'}, đã kết nối trung tâm VMS!`, 'success');
   };
 
   const handleLogout = async () => {
-    if (confirm('Đăng xuất khỏi hệ thống giám sát?')) {
+    const ok = await confirmDialog({
+      title: 'ĐĂNG XUẤT HỆ THỐNG',
+      message: 'Bạn có chắc chắn muốn kết thúc phiên vận hành giám sát hiện tại?',
+      confirmText: 'Đăng xuất',
+      cancelText: 'Ở lại',
+      danger: true,
+    });
+    if (ok) {
       try {
         await apiLogout();
       } catch {}
@@ -178,7 +194,8 @@ export default function App() {
     { path: '/settings', icon: Settings, label: 'Cài đặt' },
   ];
 
-  const pageTitle = navItems.find((n) => n.path === location.pathname)?.label || 'Trạm Giám Sát Kênh';
+  const pageTitle =
+    navItems.find((n) => n.path === location.pathname)?.label || 'Trạm Giám Sát Kênh';
 
   return (
     <AppContext.Provider
@@ -195,12 +212,10 @@ export default function App() {
       }}
     >
       <div className={`app-layout ${tvMode ? 'tv-wall-mode' : ''}`}>
-        {/* Mobile backdrop */}
         {sidebarOpen && (
           <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
         )}
 
-        {/* Collapsible VMS Navigation Sidebar */}
         {!tvMode && (
           <aside
             className={`sidebar ${sidebarOpen ? 'open' : ''} ${
@@ -214,7 +229,7 @@ export default function App() {
               {!sidebarCollapsed && (
                 <div className="logo-text-block">
                   <h1>SMART VMS</h1>
-                  <span className="logo-sub">DUAL-LENS NVR</span>
+                  <span className="logo-sub">RUST AI NVR 2.0</span>
                 </div>
               )}
               <button
@@ -255,7 +270,10 @@ export default function App() {
             </nav>
 
             <div className="sidebar-footer">
-              <div className="flex items-center gap-2" title={ws.connected ? 'WebSocket Online' : 'WebSocket Offline'}>
+              <div
+                className="flex items-center gap-2"
+                title={ws.connected ? 'WebSocket Online' : 'WebSocket Offline'}
+              >
                 {ws.connected ? (
                   <>
                     <Wifi size={13} style={{ color: 'var(--success)', flexShrink: 0 }} />
@@ -272,7 +290,6 @@ export default function App() {
           </aside>
         )}
 
-        {/* Main VMS Workspace */}
         <div className="main-content">
           {!tvMode && (
             <header className="header vms-topbar">
@@ -287,7 +304,6 @@ export default function App() {
                 <h2 className="header-title">{pageTitle}</h2>
               </div>
 
-              {/* Compact Control Room Telemetry Pills */}
               <div className="vms-telemetry-strip">
                 <div className="vms-stat-pill" title="Tổng số camera kết nối">
                   <Camera size={13} style={{ color: 'var(--accent)' }} />
@@ -319,7 +335,9 @@ export default function App() {
 
               <div className="header-right">
                 <div className="vms-digital-clock text-mono">
-                  <span className="clock-time">{clock.toLocaleTimeString('vi-VN', { hour12: false })}</span>
+                  <span className="clock-time">
+                    {clock.toLocaleTimeString('vi-VN', { hour12: false })}
+                  </span>
                   <span className="clock-date">{clock.toLocaleDateString('vi-VN')}</span>
                 </div>
 
@@ -344,7 +362,6 @@ export default function App() {
             </header>
           )}
 
-          {/* Floating exit button when in TV Wall Fullscreen mode */}
           {tvMode && (
             <button
               type="button"

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { login } from '../utils/api';
+import { TechInput } from '../components/TechUI';
 import { Shield, Lock, User, AlertCircle, Eye, EyeOff, Radio } from 'lucide-react';
 
 export default function Login({ onLoginSuccess }) {
@@ -35,14 +36,19 @@ export default function Login({ onLoginSuccess }) {
 
   return (
     <div className="login-wrapper vms-login-bg">
-      <div className="login-card vms-login-console">
+      <div className="login-card vms-login-console" style={{ position: 'relative' }}>
+        <div className="tech-corner tl" />
+        <div className="tech-corner tr" />
+        <div className="tech-corner bl" />
+        <div className="tech-corner br" />
+
         <div className="login-header">
           <div className="login-logo-icon">
             <Shield size={24} />
           </div>
           <div className="flex items-center justify-center gap-2 mb-1">
             <span className="vms-osd-badge ai">
-              <Radio size={10} /> ON-PREMISE NVR
+              <Radio size={10} /> RUST AI NVR 2.0
             </span>
             <span className="vms-osd-badge rec">DUAL-LENS VMS</span>
           </div>
@@ -58,78 +64,49 @@ export default function Login({ onLoginSuccess }) {
         )}
 
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Tài khoản vận hành</label>
-            <div style={{ position: 'relative' }}>
-              <User
-                size={16}
-                style={{
-                  position: 'absolute',
-                  left: 12,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: 'var(--text-secondary)',
-                }}
-              />
-              <input
-                type="text"
-                className="form-input"
-                style={{ paddingLeft: 36 }}
-                placeholder="Nhập tên tài khoản"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                disabled={loading}
-                autoFocus
-              />
-            </div>
-          </div>
+          <TechInput
+            label="Tài khoản vận hành"
+            icon={User}
+            type="text"
+            placeholder="Nhập tên tài khoản"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            disabled={loading}
+            autoFocus
+          />
 
-          <div className="form-group" style={{ marginBottom: 24 }}>
-            <label className="form-label">Mật khẩu bảo mật</label>
-            <div style={{ position: 'relative' }}>
-              <Lock
-                size={16}
-                style={{
-                  position: 'absolute',
-                  left: 12,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: 'var(--text-secondary)',
-                }}
-              />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                className="form-input"
-                style={{ paddingLeft: 36, paddingRight: 36 }}
-                placeholder="Nhập mật khẩu"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-              />
+          <TechInput
+            label="Mật khẩu bảo mật"
+            icon={Lock}
+            type={showPassword ? 'text' : 'password'}
+            placeholder="Nhập mật khẩu"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+            rightElement={
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={{
-                  position: 'absolute',
-                  right: 12,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
                   background: 'none',
                   border: 'none',
                   color: 'var(--text-secondary)',
                   cursor: 'pointer',
-                  padding: 0,
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                disabled={loading}
               >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
-            </div>
-          </div>
+            }
+          />
 
-          <button type="submit" className="login-btn" disabled={loading}>
+          <button
+            type="submit"
+            className="tech-btn tech-btn-primary w-full mt-3"
+            style={{ height: 40 }}
+            disabled={loading}
+          >
             {loading ? 'Đang xác thực phiên...' : 'Truy cập Hệ thống'}
           </button>
         </form>

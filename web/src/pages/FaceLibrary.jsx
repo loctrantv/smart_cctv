@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getFaces, addFace, updateFace, deleteFace, getMediaUrl } from '../utils/api';
-import { Users, Plus, Trash2, Clock, Search, Edit3, ScanFace } from 'lucide-react';
+import { Users, Plus, Trash2, Clock, Search, Edit3, ScanFace, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { ImageZoomModal, LazyEventImage } from './Events';
+import { TechInput, TechFileDropzone, useTechDialog } from '../components/TechUI';
 
 export default function FaceLibrary() {
+  const { confirmDialog, showToast } = useTechDialog();
   const [faces, setFaces] = useState([]);
   const [search, setSearch] = useState('');
-  const [modalFace, setModalFace] = useState(null); // null | { mode: 'add' } | { mode: 'edit', face }
+  const [modalFace, setModalFace] = useState(null);
   const [loading, setLoading] = useState(true);
   const [zoomImage, setZoomImage] = useState(null);
 
@@ -27,9 +29,21 @@ export default function FaceLibrary() {
   }, []);
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Xóa hồ sơ khuôn mặt "${name}"?`)) return;
-    await deleteFace(id);
-    fetchFaces();
+    const ok = await confirmDialog({
+      title: 'XÓA HỒ SƠ KHUÔN MẶT',
+      message: `Hồ sơ nhận diện và vector 512-D của "${name}" sẽ bị xóa khỏi CSDL. Bạn có chắc chắn?`,
+      confirmText: 'Xóa hồ sơ',
+      cancelText: 'Hủy',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteFace(id);
+      showToast(`Đã xóa hồ sơ khuôn mặt "${name}"`, 'success');
+      fetchFaces();
+    } catch (err) {
+      showToast('Không thể xóa khuôn mặt', 'error');
+    }
   };
 
   const filteredFaces = useMemo(() => {
@@ -45,27 +59,20 @@ export default function FaceLibrary() {
         <div className="vms-strip-left">
           <div className="flex items-center gap-2">
             <ScanFace size={17} style={{ color: 'var(--face)' }} />
-            <span className="text-sm font-bold">CSDL Nhận Diện Khuôn Mặt</span>
+            <span className="text-sm font-bold">CSDL Nhận Diện Khuôn Mặt (512-D)</span>
             <span className="vms-osd-badge ai">{faces.length} hồ sơ</span>
           </div>
 
           <div className="vms-divider" />
 
-          <div style={{ position: 'relative', minWidth: 220 }}>
-            <Search
-              size={14}
-              style={{
-                position: 'absolute',
-                left: 10,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
+          <div className="tech-input-shell" style={{ minWidth: 230, height: 32 }}>
+            <span className="tech-input-icon-left">
+              <Search size={13} />
+            </span>
             <input
               type="text"
-              className="filter-select"
-              style={{ paddingLeft: 30, paddingRight: 10 }}
+              className="tech-input-control has-left-icon"
+              style={{ height: 32, fontSize: '0.78rem' }}
               placeholder="Tìm theo tên nhân sự..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -91,7 +98,7 @@ export default function FaceLibrary() {
           <p>
             {search
               ? 'Không tìm thấy hồ sơ khuôn mặt phù hợp.'
-              : 'Chưa đăng ký khuôn mặt nào. Thêm ảnh chân dung để hệ thống nhận diện tự động.'}
+              : 'Chưa đăng ký khuôn mặt nào. Thêm ảnh chân dung để hệ thống trích xuất Vector 512-D tự động.'}
           </p>
         </div>
       ) : (
@@ -187,6 +194,7 @@ export default function FaceLibrary() {
 }
 
 function FaceFormModal({ mode, initialFace, onClose, onSaved }) {
+  const { showToast } = useTechDialog();
   const [name, setName] = useState(initialFace?.name || '');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(
@@ -194,8 +202,7 @@ function FaceFormModal({ mode, initialFace, onClose, onSaved }) {
   );
   const [saving, setSaving] = useState(false);
 
-  const handleFile = (e) => {
-    const f = e.target.files[0];
+  const handleFile = (f) => {
     if (f) {
       setFile(f);
       setPreview(URL.createObjectURL(f));
@@ -204,7 +211,10 @@ function FaceFormModal({ mode, initialFace, onClose, onSaved }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      showToast('Vui lòng nhập họ và tên nhân sự', 'warning');
+      return;
+    }
     setSaving(true);
     const formData = new FormData();
     formData.append('name', name.trim());
@@ -212,72 +222,75 @@ function FaceFormModal({ mode, initialFace, onClose, onSaved }) {
     try {
       if (mode === 'edit' && initialFace) {
         await updateFace(initialFace.id, formData);
+        showToast('Đã cập nhật hồ sơ & Vector 512-D thành công!', 'success');
       } else {
         await addFace(formData);
+        showToast('Đã đăng ký khuôn mặt & trích xuất Vector 512-D!', 'success');
       }
       onSaved();
       onClose();
     } catch (err) {
-      alert('Lỗi: ' + (err.response?.data?.error || err.message));
+      showToast('Lỗi: ' + (err.response?.data?.error || err.message), 'error');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3 className="modal-title">
-            {mode === 'edit' ? 'Cập nhật hồ sơ khuôn mặt' : 'Đăng ký khuôn mặt mới'}
-          </h3>
+    <div className="tech-modal-backdrop" onClick={onClose}>
+      <div
+        className="tech-confirm-modal"
+        style={{ maxWidth: 460 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="tech-corner tl" />
+        <div className="tech-corner tr" />
+        <div className="tech-corner bl" />
+        <div className="tech-corner br" />
+
+        <div className="tech-confirm-header">
+          <div
+            className="tech-confirm-icon"
+            style={{ color: 'var(--face)', background: 'rgba(168, 85, 247, 0.15)' }}
+          >
+            <ScanFace size={20} />
+          </div>
+          <div className="flex-1">
+            <div className="tech-confirm-tag text-mono">BIOMETRIC ENROLLMENT</div>
+            <h3 className="tech-confirm-title">
+              {mode === 'edit' ? 'Cập Nhật Hồ Sơ Khuôn Mặt' : 'Đăng Ký Khuôn Mặt Mới'}
+            </h3>
+          </div>
           <button type="button" className="btn-icon" onClick={onClose}>
-            <span>✕</span>
+            ✕
           </button>
         </div>
+
         <form onSubmit={handleSubmit}>
-          <div className="modal-body">
-            {preview && (
-              <div style={{ textAlign: 'center', marginBottom: 16 }}>
-                <img
-                  src={preview}
-                  alt="preview"
-                  style={{
-                    width: 150,
-                    height: 150,
-                    borderRadius: 10,
-                    objectFit: 'cover',
-                    border: '2px solid var(--accent)',
-                  }}
-                />
-              </div>
-            )}
-            <div className="form-group">
-              <label className="form-label">Họ và Tên *</label>
-              <input
-                className="form-input"
-                placeholder="Nhập tên nhân sự / thành viên"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Ảnh chân dung rõ mặt (JPEG, PNG, WebP)</label>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="form-input"
-                onChange={handleFile}
-              />
-            </div>
+          <div className="tech-confirm-body">
+            <TechInput
+              label="Họ và Tên Nhân Sự *"
+              icon={User}
+              placeholder="Nhập tên nhân sự / thành viên"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+
+            <TechFileDropzone
+              label="Ảnh Chân Dung Rõ Mặt (Tự động trích xuất Vector 512-D)"
+              accept="image/jpeg,image/png,image/webp"
+              onFileSelect={handleFile}
+              previewUrl={preview}
+            />
           </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              Hủy
+
+          <div className="tech-confirm-footer">
+            <button type="button" className="tech-btn tech-btn-ghost" onClick={onClose}>
+              Hủy bỏ
             </button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Đang lưu...' : mode === 'edit' ? 'Cập nhật' : 'Đăng ký'}
+            <button type="submit" className="tech-btn tech-btn-primary" disabled={saving}>
+              {saving ? 'Đang trích xuất AI...' : mode === 'edit' ? 'Cập nhật hồ sơ' : 'Đăng ký ngay'}
             </button>
           </div>
         </form>

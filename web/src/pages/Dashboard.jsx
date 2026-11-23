@@ -32,8 +32,11 @@ import {
   Activity,
   ArrowUpSquare,
   ArrowDownSquare,
+  Link,
+  MapPin,
 } from 'lucide-react';
 import VideoPlayer from '../components/VideoPlayer';
+import { TechInput, useTechDialog } from '../components/TechUI';
 
 /**
  * Layouts specifically engineered for Dual-Lens (8:9 stacked 2x16:9) CCTV cameras:
@@ -548,6 +551,7 @@ export default function Dashboard() {
 }
 
 function AddCameraModal({ onClose, onAdded }) {
+  const { showToast } = useTechDialog();
   const [form, setForm] = useState({ name: '', rtsp_url: '', location: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -555,13 +559,14 @@ function AddCameraModal({ onClose, onAdded }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name || !form.rtsp_url) {
-      setError('Vui lòng điền tên và RTSP URL');
+      setError('Vui lòng điền tên kênh và RTSP URL');
       return;
     }
     setSaving(true);
     setError('');
     try {
       await addCamera(form);
+      showToast(`Đã kết nối kênh camera "${form.name}" thành công!`, 'success');
       onAdded();
       onClose();
     } catch (err) {
@@ -572,55 +577,64 @@ function AddCameraModal({ onClose, onAdded }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1000 }}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3 className="modal-title">Thêm Kênh Camera Mới</h3>
+    <div className="tech-modal-backdrop" onClick={onClose}>
+      <div className="tech-confirm-modal" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <div className="tech-corner tl" />
+        <div className="tech-corner tr" />
+        <div className="tech-corner bl" />
+        <div className="tech-corner br" />
+
+        <div className="tech-confirm-header">
+          <div className="tech-confirm-icon" style={{ color: 'var(--accent)', background: 'var(--accent-glow)' }}>
+            <Camera size={20} />
+          </div>
+          <div className="flex-1">
+            <div className="tech-confirm-tag text-mono">CHANNEL PROVISIONING</div>
+            <h3 className="tech-confirm-title">Thêm Kênh Camera Mới</h3>
+          </div>
           <button type="button" className="btn-icon" onClick={onClose}>
-            <span>✕</span>
+            ✕
           </button>
         </div>
+
         <form onSubmit={handleSubmit}>
-          <div className="modal-body">
+          <div className="tech-confirm-body">
             {error && (
-              <div style={{ color: 'var(--danger)', marginBottom: 12, fontSize: '0.85rem' }}>
-                {error}
+              <div className="login-alert" style={{ marginBottom: 14 }}>
+                <AlertTriangle size={15} />
+                <span>{error}</span>
               </div>
             )}
-            <div className="form-group">
-              <label className="form-label">Tên Camera *</label>
-              <input
-                className="form-input"
-                placeholder="VD: Camera Sân Trước (2 Mắt)"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">RTSP URL *</label>
-              <input
-                className="form-input text-sm font-mono"
-                placeholder="rtsp://admin:password@192.168.1.100:554/stream1"
-                value={form.rtsp_url}
-                onChange={(e) => setForm({ ...form, rtsp_url: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Vị trí lắp đặt</label>
-              <input
-                className="form-input"
-                placeholder="VD: Cổng chính / Sân thượng"
-                value={form.location}
-                onChange={(e) => setForm({ ...form, location: e.target.value })}
-              />
-            </div>
+            <TechInput
+              label="Tên Kênh Camera *"
+              icon={Camera}
+              placeholder="VD: Camera Sân Trước (2 Mắt)"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              autoFocus
+            />
+            <TechInput
+              label="Đường dẫn luồng RTSP URL *"
+              icon={Link}
+              mono
+              placeholder="rtsp://admin:password@192.168.1.100:554/stream1"
+              value={form.rtsp_url}
+              onChange={(e) => setForm({ ...form, rtsp_url: e.target.value })}
+            />
+            <TechInput
+              label="Vị trí lắp đặt"
+              icon={MapPin}
+              placeholder="VD: Cổng chính / Sân thượng"
+              value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+            />
           </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              Hủy
+          <div className="tech-confirm-footer">
+            <button type="button" className="tech-btn tech-btn-ghost" onClick={onClose}>
+              Hủy bỏ
             </button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Đang kết nối...' : 'Thêm Camera'}
+            <button type="submit" className="tech-btn tech-btn-primary" disabled={saving}>
+              {saving ? 'Đang khởi tạo...' : 'Kết nối Camera'}
             </button>
           </div>
         </form>
