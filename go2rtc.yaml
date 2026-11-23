@@ -1,10 +1,10 @@
 # go2rtc configuration for Smart CCTV
-# Cameras are managed dynamically via the API server
-# This file provides default settings
+# Cameras are managed dynamically via the Node.js API server.
+# Port 1984 and 8554 are bound strictly to 127.0.0.1 via docker-compose.yml.
 
 api:
   listen: ":1984"
-  origin: "*"
+  origin: ""
 
 rtsp:
   listen: ":8554"
@@ -13,12 +13,6 @@ webrtc:
   listen: ":8555"
   candidates:
     - stun:stun.l.google.com:19302
-
-# Streams are added dynamically via go2rtc API
-# Example static stream (uncomment and modify):
-# streams:
-#   camera1: rtsp://admin:password@192.168.1.100:554/stream1
-#   camera2: rtsp://admin:password@192.168.1.101:554/stream1
 
 log:
   level: info

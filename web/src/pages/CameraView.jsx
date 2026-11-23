@@ -1,38 +1,104 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getCamera, updateCamera, startRecording, stopRecording, deleteCamera } from '../utils/api';
+import {
+  getCamera,
+  getCameras,
+  updateCamera,
+  startRecording,
+  stopRecording,
+  getEvents,
+  getMediaUrl,
+} from '../utils/api';
 import VideoPlayer from '../components/VideoPlayer';
 import {
-  ArrowLeft, Video, VideoOff, Eye, EyeOff,
-  Camera, Trash2, Settings, Download
+  ArrowLeft,
+  Video,
+  VideoOff,
+  Eye,
+  EyeOff,
+  Settings,
+  PlayCircle,
+  Columns,
+  Rows,
+  ArrowUpSquare,
+  ArrowDownSquare,
+  AlertTriangle,
+  Check,
+  Trash2,
 } from 'lucide-react';
 
 export default function CameraView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [camera, setCamera] = useState(null);
+  const [allCameras, setAllCameras] = useState([]);
+  const [cameraEvents, setCameraEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Dual-Lens view mode: default to 'split' (Side-by-Side 2x16:9) on wide desktop screens,
+  // automatically switches to 'stacked' (8:9 raw frame) when drawing AI Detection Zones!
+  const [lensMode, setLensMode] = useState('split');
   const [showZoneConfig, setShowZoneConfig] = useState(false);
   const [zones, setZones] = useState([]);
   const [activeZone, setActiveZone] = useState(null);
-  const [aspectRatio, setAspectRatio] = useState(16 / 9);
+  const [aspectRatio, setAspectRatio] = useState(8 / 9);
 
-  const containerRef = useRef(null);
+  const stageRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState(null);
+
+  const fetchCameraData = useCallback(async () => {
+    try {
+      const [data, list, evts] = await Promise.all([
+        getCamera(id),
+        getCameras(),
+        getEvents({ camera_id: id, limit: 12 }),
+      ]);
+      setCamera(data);
+      setAllCameras(list || []);
+      setCameraEvents(evts?.events || []);
+
+      if (data.detection_zone) {
+        if (data.detection_zone.startsWith('[')) {
+          try {
+            setZones(JSON.parse(data.detection_zone));
+          } catch {
+            setZones([]);
+          }
+        } else {
+          const parts = data.detection_zone.split(',').map(Number);
+          if (parts.length === 4) {
+            setZones([{ x: parts[0], y: parts[1], w: parts[2], h: parts[3] }]);
+          } else {
+            setZones([]);
+          }
+        }
+      } else {
+        setZones([]);
+      }
+    } catch {
+      navigate('/');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, navigate]);
+
+  useEffect(() => {
+    fetchCameraData();
+  }, [fetchCameraData]);
 
   const getCoordinates = (e, rect) => {
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     return {
       x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+      y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
     };
   };
 
   const handleStart = (e) => {
-    if (!showZoneConfig || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
+    if (!showZoneConfig || !stageRef.current) return;
+    const rect = stageRef.current.getBoundingClientRect();
     const pos = getCoordinates(e, rect);
     setIsDrawing(true);
     setStartPos(pos);
@@ -40,71 +106,48 @@ export default function CameraView() {
   };
 
   const handleMove = (e) => {
-    if (!isDrawing || !startPos || !containerRef.current) return;
-    if (e.cancelable) e.preventDefault(); // prevent touch drag scroll
-    
-    const rect = containerRef.current.getBoundingClientRect();
+    if (!isDrawing || !startPos || !stageRef.current) return;
+    if (e.cancelable) e.preventDefault();
+
+    const rect = stageRef.current.getBoundingClientRect();
     const pos = getCoordinates(e, rect);
-    
+
     const x = Math.min(startPos.x, pos.x);
     const y = Math.min(startPos.y, pos.y);
     const w = Math.max(0.01, Math.abs(startPos.x - pos.x));
     const h = Math.max(0.01, Math.abs(startPos.y - pos.y));
-    
+
     setActiveZone({ x, y, w, h });
   };
 
   const handleEnd = () => {
-    if (isDrawing && activeZone && activeZone.w > 0.01 && activeZone.h > 0.01) {
-      setZones(prev => [...prev, activeZone]);
+    if (isDrawing && activeZone && activeZone.w > 0.02 && activeZone.h > 0.02) {
+      setZones((prev) => [...prev, activeZone]);
     }
     setIsDrawing(false);
     setStartPos(null);
     setActiveZone(null);
   };
 
-  useEffect(() => {
-    async function fetch() {
-      try {
-        const data = await getCamera(id);
-        setCamera(data);
-        if (data.detection_zone) {
-          if (data.detection_zone.startsWith('[')) {
-            try {
-              setZones(JSON.parse(data.detection_zone));
-            } catch {
-              setZones([]);
-            }
-          } else {
-            const parts = data.detection_zone.split(',').map(Number);
-            if (parts.length === 4) {
-              setZones([{ x: parts[0], y: parts[1], w: parts[2], h: parts[3] }]);
-            } else {
-              setZones([]);
-            }
-          }
-        } else {
-          setZones([]);
-        }
-      } catch {
-        navigate('/');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetch();
-  }, [id, navigate]);
-
   const handleSaveZone = async () => {
     try {
       const zoneString = JSON.stringify(zones);
       await updateCamera(camera.id, { detection_zone: zoneString });
-      alert('Đã cập nhật các vùng quét phát hiện chuyển động cho camera!');
       setShowZoneConfig(false);
       const updated = await getCamera(id);
       setCamera(updated);
     } catch (err) {
-      alert('Không thể lưu cấu hình vùng quét: ' + err.message);
+      alert('Không thể lưu cấu hình vùng quét: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const addPresetLensZone = (whichLens) => {
+    if (whichLens === 'top') {
+      // Full Top Lens (0% -> 50% height)
+      setZones((prev) => [...prev, { x: 0.02, y: 0.02, w: 0.96, h: 0.46 }]);
+    } else if (whichLens === 'bottom') {
+      // Full Bottom Lens (50% -> 100% height)
+      setZones((prev) => [...prev, { x: 0.02, y: 0.52, w: 0.96, h: 0.46 }]);
     }
   };
 
@@ -124,284 +167,411 @@ export default function CameraView() {
     setCamera(updated);
   };
 
-
-
   if (loading || !camera) {
-    return <div className="empty-state"><p>Đang tải...</p></div>;
+    return (
+      <div className="empty-state">
+        <p>Đang tải trạm điều khiển camera...</p>
+      </div>
+    );
   }
 
   return (
-    <div>
-      {/* Page Header */}
-      <div className="flex items-center gap-3 mb-4 lg:mb-6">
-        <button 
-          className="flex items-center justify-center w-10 h-10 rounded-xl hover:bg-white/10 transition-colors shrink-0 bg-secondary" 
-          onClick={() => navigate('/')}
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <div>
-          <h2 className="text-lg md:text-xl font-bold leading-tight flex items-center gap-2">
-            {camera.name}
-            <div className={`w-2 h-2 rounded-full ${camera.enabled ? 'bg-green-500' : 'bg-red-500'}`} />
-          </h2>
-          {camera.location && (
-            <p className="text-xs md:text-sm text-muted mt-0.5">{camera.location}</p>
+    <div className="vms-workstation">
+      {/* Top Workstation Toolbar */}
+      <div className="vms-control-strip">
+        <div className="vms-strip-left">
+          <button
+            type="button"
+            className="vms-strip-btn"
+            onClick={() => navigate('/')}
+            title="Quay lại bảng Live Matrix"
+          >
+            <ArrowLeft size={15} />
+            <span>Matrix</span>
+          </button>
+
+          <div className="vms-divider" />
+
+          <div className="flex items-center gap-2">
+            <span className={`status-pulse-dot ${camera.enabled ? 'online' : 'offline'}`} />
+            <strong className="text-sm">{camera.name}</strong>
+            {camera.location && (
+              <span className="text-xs text-muted">({camera.location})</span>
+            )}
+          </div>
+
+          {/* Quick Channel Switcher */}
+          {allCameras.length > 1 && (
+            <select
+              className="vms-channel-select"
+              value={camera.id}
+              onChange={(e) => navigate(`/camera/${e.target.value}`)}
+            >
+              {allCameras.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Chuyển kênh: {c.name}
+                </option>
+              ))}
+            </select>
           )}
         </div>
-      </div>
 
-      {/* Video */}
-      <div 
-        ref={containerRef} 
-        style={{ 
-          width: '100%',
-          maxWidth: 560,
-          margin: '0 auto', 
-          position: 'relative', 
-          overflow: 'hidden', 
-          userSelect: 'none',
-          aspectRatio: aspectRatio,
-          background: '#000',
-          borderRadius: 'var(--radius-md, 8px)'
-        }}
-      >
-        <VideoPlayer
-          streamId={camera.stream_id}
-          streams={camera.streams}
-          autoPlay
-          muted={false}
-          onAspectRatioChange={setAspectRatio}
-        />
-        
-        {/* Transparent Interactive Drawing Overlay */}
-        {showZoneConfig && (
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              zIndex: 15,
-              cursor: 'crosshair',
-              pointerEvents: 'auto',
-              userSelect: 'none',
-              WebkitUserSelect: 'none'
-            }}
-            onMouseDown={handleStart}
-            onMouseMove={handleMove}
-            onMouseUp={handleEnd}
-            onMouseLeave={handleEnd}
-            onTouchStart={handleStart}
-            onTouchMove={handleMove}
-            onTouchEnd={handleEnd}
-          />
-        )}
-        
-        {/* All Active Detection Zones Overlays */}
-        {showZoneConfig && (zones.length > 0) && zones.map((z, idx) => (
-          <div 
-            key={idx} 
-            style={{
-              position: 'absolute',
-              left: `${z.x * 100}%`,
-              top: `${z.y * 100}%`,
-              width: `${z.w * 100}%`,
-              height: `${z.h * 100}%`,
-              border: '2px dashed var(--danger, #ef4444)',
-              background: 'rgba(239, 68, 68, 0.15)',
-              boxShadow: '0 0 8px rgba(239, 68, 68, 0.4)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 10,
-              borderRadius: '4px'
-            }}
+        {/* Dual-Lens View Selector & Action Buttons */}
+        <div className="vms-strip-right">
+          {!showZoneConfig && (
+            <div className="vms-btn-group">
+              <button
+                type="button"
+                className={`vms-strip-btn ${lensMode === 'split' ? 'active' : ''}`}
+                onClick={() => setLensMode('split')}
+                title="Tách Ngang 2 Mắt (Mắt 1 Trái - Mắt 2 Phải)"
+              >
+                <Columns size={13} /> <span>Tách Ngang 2 Mắt</span>
+              </button>
+              <button
+                type="button"
+                className={`vms-strip-btn ${lensMode === 'stacked' ? 'active' : ''}`}
+                onClick={() => setLensMode('stacked')}
+                title="Kép Dọc nguyên bản (8:9)"
+              >
+                <Rows size={13} /> <span>Kép Dọc (8:9)</span>
+              </button>
+              <button
+                type="button"
+                className={`vms-strip-btn ${lensMode === 'top' ? 'active' : ''}`}
+                onClick={() => setLensMode('top')}
+              >
+                <ArrowUpSquare size={13} /> <span>Mắt 1 (Trên)</span>
+              </button>
+              <button
+                type="button"
+                className={`vms-strip-btn ${lensMode === 'bottom' ? 'active' : ''}`}
+                onClick={() => setLensMode('bottom')}
+              >
+                <ArrowDownSquare size={13} /> <span>Mắt 2 (Dưới)</span>
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className={`btn btn-sm ${camera.record_enabled ? 'btn-danger' : 'btn-secondary'}`}
+            onClick={toggleRecording}
+            id="toggle-recording"
           >
-            {showZoneConfig && (
-              <button
-                style={{
-                  position: 'absolute',
-                  top: -8,
-                  right: -8,
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  background: '#ef4444',
-                  color: '#fff',
-                  border: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '10px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                  zIndex: 20,
-                  pointerEvents: 'auto'
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setZones(prev => prev.filter((_, i) => i !== idx));
-                }}
-              >
-                ✕
-              </button>
+            {camera.record_enabled ? (
+              <>
+                <VideoOff size={14} /> Dừng ghi
+              </>
+            ) : (
+              <>
+                <Video size={14} /> Ghi hình
+              </>
             )}
-            <span style={{
-              position: 'absolute',
-              bottom: 2,
-              left: 4,
-              color: '#fff',
-              fontSize: '0.65rem',
-              background: 'rgba(0,0,0,0.6)',
-              padding: '2px 4px',
-              borderRadius: '2px',
-              textShadow: '0 1px 2px rgba(0,0,0,0.8)'
-            }}>
-              Vùng #{idx + 1} ({Math.round(z.w * 100)}%x{Math.round(z.h * 100)}%)
-            </span>
-          </div>
-        ))}
+          </button>
 
-        {/* Temporary active drawing zone preview */}
-        {isDrawing && activeZone && (
-          <div 
-            style={{
-              position: 'absolute',
-              left: `${activeZone.x * 100}%`,
-              top: `${activeZone.y * 100}%`,
-              width: `${activeZone.w * 100}%`,
-              height: `${activeZone.h * 100}%`,
-              border: '3px solid #ff4d4d',
-              background: 'rgba(255, 77, 77, 0.25)',
-              boxShadow: '0 0 10px rgba(255,77,77,0.5)',
-              borderRadius: '4px',
-              zIndex: 14
-            }}
-          />
-        )}
+          <button
+            type="button"
+            className={`btn btn-sm ${camera.detection_enabled ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={toggleDetection}
+            id="toggle-detection"
+          >
+            {camera.detection_enabled ? (
+              <>
+                <EyeOff size={14} /> Tắt AI
+              </>
+            ) : (
+              <>
+                <Eye size={14} /> Bật AI
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`btn btn-sm ${showZoneConfig ? 'btn-danger' : 'btn-secondary'}`}
+            onClick={() => setShowZoneConfig(!showZoneConfig)}
+            id="toggle-zone-config"
+          >
+            <Settings size={14} /> {showZoneConfig ? 'Đóng Vẽ Vùng' : 'Vùng Quét AI'}
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() => navigate('/playback')}
+          >
+            <PlayCircle size={14} /> Xem lại
+          </button>
+        </div>
       </div>
 
-      {/* Controls */}
-      <div style={{ maxWidth: 960, margin: '16px auto' }}>
-        <div className="card">
-          <div className="card-body">
-            <div className="flex gap-3" style={{ flexWrap: 'wrap' }}>
-              <button
-                className={`btn ${camera.record_enabled ? 'btn-danger' : 'btn-secondary'}`}
-                onClick={toggleRecording}
-                id="toggle-recording"
-              >
-                {camera.record_enabled ? <><VideoOff size={16} /> Dừng ghi</> : <><Video size={16} /> Bắt đầu ghi</>}
-              </button>
+      {/* Two-Column Workstation Content */}
+      <div className="vms-workstation-body">
+        {/* Left Main Video Stage */}
+        <div className="vms-workstation-stage">
+          <div
+            ref={stageRef}
+            className={`vms-stage-frame ${
+              showZoneConfig ? 'zone-drawing-locked' : `mode-${lensMode}`
+            }`}
+            style={
+              showZoneConfig || lensMode === 'stacked'
+                ? { aspectRatio: `${aspectRatio}` }
+                : undefined
+            }
+          >
+            <VideoPlayer
+              streamId={camera.stream_id}
+              streams={camera.streams}
+              cameraName={camera.name}
+              autoPlay
+              muted={false}
+              lensMode={lensMode}
+              onLensModeChange={setLensMode}
+              lockStacked={showZoneConfig}
+              onAspectRatioChange={setAspectRatio}
+            />
 
-              <button
-                className={`btn ${camera.detection_enabled ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={toggleDetection}
-                id="toggle-detection"
-              >
-                {camera.detection_enabled ? <><EyeOff size={16} /> Tắt phát hiện</> : <><Eye size={16} /> Bật phát hiện</>}
-              </button>
-
-              <button
-                className={`btn ${showZoneConfig ? 'btn-danger' : 'btn-secondary'}`}
-                onClick={() => setShowZoneConfig(!showZoneConfig)}
-                id="toggle-zone-config"
-              >
-                <Settings size={16} /> {showZoneConfig ? 'Đóng cấu hình' : 'Cấu hình vùng quét'}
-              </button>
-
-              <button className="btn btn-secondary" onClick={() => navigate('/playback')} id="goto-playback">
-                <Download size={16} /> Xem lại
-              </button>
-            </div>
-
-            {/* Zone Config Control Panel */}
+            {/* Interactive Zone Drawing Overlay (Locked to raw 8:9 dual frame so coordinates match FFmpeg 100%) */}
             {showZoneConfig && (
-              <div className="card mt-3 animate-fadeIn" style={{ border: '1px solid rgba(239, 68, 68, 0.3)', background: 'var(--bg-elevated)' }}>
-                <style>{`
-                  @keyframes fadeIn {
-                    from { opacity: 0; transform: translateY(-10px); }
-                    to { opacity: 1; transform: translateY(0); }
-                  }
-                  .animate-fadeIn {
-                    animation: fadeIn 0.25s ease-out;
-                  }
-                `}</style>
-                <div className="card-header flex items-center justify-between" style={{ background: 'rgba(239, 68, 68, 0.05)', padding: '10px 16px' }}>
-                  <span className="font-bold flex items-center gap-2" style={{ color: 'var(--danger, #ef4444)' }}>
-                    <Settings size={16} /> Cấu hình các vùng phát hiện chuyển động
-                  </span>
-                  <button className="btn btn-secondary btn-sm" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setZones([])}>
-                    Xóa tất cả các vùng
-                  </button>
+              <>
+                {/* 50% Dual-Lens Boundary Guide Line */}
+                <div className="vms-zone-lens-boundary">
+                  <span className="lens-guide-top">▲ MẮT 1 (KHUNG TRÊN: 0% – 50%)</span>
+                  <span className="lens-guide-bottom">▼ MẮT 2 (KHUNG DƯỚI: 50% – 100%)</span>
                 </div>
-                <div className="card-body" style={{ padding: '16px' }}>
-                  <p className="text-xs text-muted mb-4">
-                    Nhấp chuột và kéo thả (hoặc chạm vuốt trên màn hình điện thoại) <strong>trực tiếp lên màn hình video camera ở trên</strong> để tự do vẽ các vùng quét. Bạn có thể vẽ nhiều vùng tùy ý. Nhấp dấu ✕ ở góc trên mỗi vùng để xóa vùng đó.
-                  </p>
-                  
-                  <div className="text-sm font-bold mb-2 flex justify-between items-center">
-                    <span>Danh sách vùng quét đã vẽ ({zones.length})</span>
-                  </div>
 
-                  {zones.length === 0 ? (
-                    <div className="text-xs text-muted p-3 text-center" style={{ background: 'var(--bg-input)', borderRadius: '4px', border: '1px dashed var(--border)' }}>
-                      Chưa vẽ vùng quét nào. Camera sẽ mặc định phát hiện chuyển động trên toàn màn hình.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
-                      {zones.map((z, idx) => (
-                        <div key={idx} className="flex justify-between items-center p-2" style={{ background: 'var(--bg-input)', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                          <span className="text-xs font-bold" style={{ color: 'var(--danger, #ef4444)' }}>Vùng #{idx + 1}</span>
-                          <span className="text-xs text-mono text-muted">{Math.round(z.w*100)}% x {Math.round(z.h*100)}%</span>
-                          <button 
-                            style={{ background: 'none', border: 'none', color: '#ff4d4d', cursor: 'pointer', padding: '0 4px', fontSize: '12px' }}
-                            onClick={() => setZones(prev => prev.filter((_, i) => i !== idx))}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div
+                  className="vms-zone-draw-surface"
+                  onMouseDown={handleStart}
+                  onMouseMove={handleMove}
+                  onMouseUp={handleEnd}
+                  onMouseLeave={handleEnd}
+                  onTouchStart={handleStart}
+                  onTouchMove={handleMove}
+                  onTouchEnd={handleEnd}
+                />
 
-                  <div className="mt-4 flex justify-end gap-2">
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowZoneConfig(false)}>
-                      Hủy bỏ
+                {zones.map((z, idx) => (
+                  <div
+                    key={idx}
+                    className="vms-zone-box"
+                    style={{
+                      left: `${z.x * 100}%`,
+                      top: `${z.y * 100}%`,
+                      width: `${z.w * 100}%`,
+                      height: `${z.h * 100}%`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="vms-zone-remove-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZones((prev) => prev.filter((_, i) => i !== idx));
+                      }}
+                    >
+                      ✕
                     </button>
-                    <button className="btn btn-primary btn-sm" onClick={handleSaveZone} id="save-zone-btn">
-                      Lưu cấu hình
-                    </button>
+                    <span className="vms-zone-label">
+                      Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1' : 'Mắt 2'})
+                    </span>
                   </div>
-                </div>
-              </div>
+                ))}
+
+                {isDrawing && activeZone && (
+                  <div
+                    className="vms-zone-box drawing"
+                    style={{
+                      left: `${activeZone.x * 100}%`,
+                      top: `${activeZone.y * 100}%`,
+                      width: `${activeZone.w * 100}%`,
+                      height: `${activeZone.h * 100}%`,
+                    }}
+                  />
+                )}
+              </>
             )}
-
-            {/* Camera Info */}
-            <div className="mt-4">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <div className="text-xs text-muted mb-2">Stream ID</div>
-                  <div className="text-sm text-mono">{camera.stream_id}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted mb-2">Trạng thái</div>
-                  <div className="flex items-center gap-2">
-                    <div className={`status-dot ${camera.enabled ? '' : 'offline'}`} />
-                    <span className="text-sm">{camera.enabled ? 'Online' : 'Offline'}</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted mb-2">Sự kiện hôm nay</div>
-                  <div className="text-sm font-bold">{camera.events_today || 0}</div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
+
+        {/* Right Side Inspector Panel (Zone Editor + Channel Info + Camera Recent Events) */}
+        <aside className="vms-workstation-sidebar custom-scrollbar">
+          {showZoneConfig ? (
+            <div className="card mb-3" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+              <div className="card-header">
+                <span className="font-bold text-sm" style={{ color: 'var(--danger)' }}>
+                  Vẽ Vùng Quét AI (2 Mắt 8:9)
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setZones([])}
+                >
+                  <Trash2 size={12} /> Xóa hết
+                </button>
+              </div>
+              <div className="card-body" style={{ padding: 14 }}>
+                <p className="text-xs text-muted mb-3">
+                  Khung hình đã được chuyển về chế độ <strong>Kép Dọc (8:9)</strong> để khớp tọa độ
+                  với FFmpeg. Kéo chuột trực tiếp lên Mắt 1 (nửa trên) hoặc Mắt 2 (nửa dưới) để vẽ
+                  vùng quét.
+                </p>
+
+                <div className="flex gap-2 mb-3">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm flex-1"
+                    onClick={() => addPresetLensZone('top')}
+                  >
+                    + Chọn trọn Mắt 1
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm flex-1"
+                    onClick={() => addPresetLensZone('bottom')}
+                  >
+                    + Chọn trọn Mắt 2
+                  </button>
+                </div>
+
+                <div className="text-xs font-bold mb-2">
+                  Danh sách vùng quét ({zones.length})
+                </div>
+                {zones.length === 0 ? (
+                  <div
+                    className="text-xs text-muted p-3 text-center"
+                    style={{
+                      background: 'var(--bg-input)',
+                      borderRadius: 6,
+                      border: '1px dashed var(--border)',
+                    }}
+                  >
+                    Chưa vẽ vùng nào (Mặc định quét toàn bộ cả 2 mắt camera).
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {zones.map((z, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2"
+                        style={{
+                          background: 'var(--bg-input)',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                        }}
+                      >
+                        <span className="text-xs font-bold">
+                          Vùng #{idx + 1} ({z.y + z.h / 2 < 0.5 ? 'Mắt 1 - Trên' : 'Mắt 2 - Dưới'})
+                        </span>
+                        <span className="text-xs text-mono text-muted">
+                          {Math.round(z.w * 100)}%×{Math.round(z.h * 100)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setShowZoneConfig(false)}
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleSaveZone}
+                    id="save-zone-btn"
+                  >
+                    <Check size={14} /> Lưu vùng quét
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Technical Channel Details Card */}
+          <div className="card mb-3">
+            <div className="card-header">
+              <span className="font-bold text-sm">Thông Số Kênh</span>
+            </div>
+            <div className="card-body" style={{ padding: 14 }}>
+              <div className="vms-kv-list">
+                <div className="vms-kv-row">
+                  <span className="text-xs text-muted">Mã luồng</span>
+                  <span className="text-xs text-mono">{camera.stream_id}</span>
+                </div>
+                <div className="vms-kv-row">
+                  <span className="text-xs text-muted">Cấu trúc khung</span>
+                  <span className="text-xs text-mono">Dual-Lens (2×16:9 / 8:9)</span>
+                </div>
+                <div className="vms-kv-row">
+                  <span className="text-xs text-muted">Vùng quét AI</span>
+                  <span className="text-xs font-bold">
+                    {zones.length > 0 ? `${zones.length} vùng tùy chỉnh` : 'Toàn khung (2 mắt)'}
+                  </span>
+                </div>
+                <div className="vms-kv-row">
+                  <span className="text-xs text-muted">Sự kiện 24h</span>
+                  <span className="text-xs font-bold">{camera.events_today || 0}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Events of This Camera */}
+          <div className="card">
+            <div className="card-header">
+              <span className="font-bold text-sm flex items-center gap-2">
+                <AlertTriangle size={14} style={{ color: 'var(--warning)' }} />
+                Sự Kiện Gần Đây Của Kênh
+              </span>
+            </div>
+            <div className="card-body" style={{ padding: 10 }}>
+              {cameraEvents.length === 0 ? (
+                <p className="text-xs text-muted text-center p-4">Chưa có sự kiện nào trên kênh này</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {cameraEvents.map((evt) => (
+                    <div key={evt.id} className="vms-drawer-item">
+                      <div className="vms-drawer-thumb">
+                        {evt.snapshot_path ? (
+                          <img
+                            src={getMediaUrl(`snapshots/${evt.snapshot_path}`)}
+                            alt="snapshot"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="video-placeholder">
+                            <AlertTriangle size={14} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="vms-drawer-meta">
+                        <span className={`event-type ${evt.type}`}>
+                          {evt.type === 'sound_alert' ? 'Âm thanh lạ' : 'Chuyển động'}
+                        </span>
+                        <div className="text-xs text-mono text-muted mt-1">
+                          {evt.timestamp
+                            ? new Date(
+                                evt.timestamp.includes('Z')
+                                  ? evt.timestamp
+                                  : evt.timestamp.replace(' ', 'T') + 'Z'
+                              ).toLocaleString('vi-VN', { hour12: false })
+                            : ''}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

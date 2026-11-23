@@ -1,6 +1,7 @@
-# Smart CCTV
+# Smart CCTV (Native Node.js + go2rtc Docker)
 
 > Hệ thống quản lý camera giám sát mã nguồn mở, chạy hoàn toàn **on-premise**, giao diện web responsive, tối ưu cho server tài nguyên thấp.
+> Kiến trúc **Host Native (PM2)** kết hợp **`go2rtc` chạy trong Docker được cô lập nội bộ (`127.0.0.1`)**.
 
 ---
 
@@ -8,170 +9,121 @@
 
 | Tính năng | Mô tả |
 |---|---|
-| **Xem trực tiếp** | WebRTC độ trễ thấp, HLS fallback tự động |
-| **Ghi hình** | Liên tục hoặc theo lịch, stream copy — CPU ≈ 0% |
-| **Phát hiện chuyển động** | Snapshot analysis, tự động quay video khi có chuyển động |
+| **Xem trực tiếp** | WebRTC độ trễ thấp, HLS fallback tự động (qua Proxy xác thực của Node.js) |
+| **Ghi hình** | Liên tục hoặc theo sự kiện, stream copy (`-c:v copy`) — CPU ≈ 0%, tự phục hồi bản ghi khi mất điện |
+| **Phát hiện chuyển động** | Snapshot analysis theo vùng quét tùy chọn (multi-zone), tự động quay video khi có chuyển động |
 | **Phát hiện âm thanh** | Lắng nghe âm thanh bất thường trong khung giờ ban đêm (tùy chỉnh), tự động quay video |
-| **Nhận dạng khuôn mặt** | Đăng ký khuôn mặt, nhận diện thời gian thực |
-| **Xem lại** | Timeline 24h, tua nhanh, tìm kiếm theo sự kiện |
+| **Nhận dạng khuôn mặt** | Đăng ký khuôn mặt (kiểm tra định dạng ảnh Magic Bytes), nhận diện thời gian thực |
+| **Xem lại** | Timeline 24h có minimap zoom, tua nhanh, tìm kiếm theo sự kiện |
 | **Sự kiện** | Lịch sử toàn bộ sự kiện, lọc theo loại / camera, xóa hàng loạt |
 | **Quản lý lưu trữ** | Tự động xóa file cũ theo dung lượng và số ngày lưu |
-| **Realtime** | WebSocket broadcast — UI cập nhật ngay khi có sự kiện |
-| **Responsive** | Hoạt động tốt trên desktop và mobile |
+| **Bảo mật cao** | Băm mật khẩu `scrypt`, HttpOnly Session Cookie, Rate Limit chống Brute-force, ẩn mật khẩu RTSP, chống SSRF/Command Injection |
+| **Hot-reload cài đặt** | Thay đổi cài đặt phát hiện chuyển động / âm thanh áp dụng ngay lập tức không cần restart |
 
 ---
 
-## Kiến trúc
+## Kiến trúc Bảo mật
 
 ```
-Browser
-  └─ React SPA (Vite)
-       ├─ WebRTC / HLS ──► go2rtc (RTSP proxy)
-       │                        └─ Camera RTSP streams
-       └─ REST API / WS ──► Node.js + Express
-                                 ├─ SQLite (metadata, events, settings)
-                                 ├─ FFmpeg (recording, detection snapshots)
-                                 └─ go2rtc API (stream management)
+Browser (Desktop / Mobile)
+  ├─ HTTPS / WSS (:3001) ──────► Node.js + Express (Chạy trực tiếp trên Host qua PM2)
+  │                                ├─ Phục vụ tĩnh React SPA (web/dist)
+  │                                ├─ Xác thực HttpOnly Cookie + JWT + Rate Limit
+  │                                ├─ SQLite WAL (users, cameras, recordings, events, settings)
+  │                                ├─ FFmpeg Native (recording, detection snapshots, audio RMS)
+  │                                └─ Authenticated Proxy (/api/cameras/:id/webrtc, /hls, /snapshot)
+  │                                      │
+  │                                      ▼ (Chỉ kết nối nội bộ 127.0.0.1:1984 & 127.0.0.1:8554)
+  └─ WebRTC Media (:8555) ────► Docker: go2rtc (RTSP proxy)
+                                         └─ Camera RTSP streams
 ```
 
-| Layer | Công nghệ | Vai trò |
-|---|---|---|
-| Streaming proxy | go2rtc | RTSP → WebRTC / HLS |
-| Backend | Node.js + Express | REST API, WebSocket, business logic |
-| Recording / Detection | FFmpeg | Stream copy, snapshot, audio RMS |
-| Database | SQLite (better-sqlite3) | Cameras, recordings, events, settings |
-| Frontend | React 18 + Vite | SPA, realtime dashboard |
-| Deploy | Docker Compose | Container orchestration |
+- **Chỉ `go2rtc` chạy trong Docker**: Cổng API (`1984`) và RTSP (`8554`) của `go2rtc` chỉ mở ở `127.0.0.1` trên máy chủ, ngăn chặn hoàn toàn việc người ngoài truy cập trái phép vào dashboard `go2rtc` hoặc lấy cắp mật khẩu RTSP của camera.
+- **Node.js & FFmpeg chạy trực tiếp trên Host (quản lý qua PM2)**: Phục vụ đồng thời cả Frontend (`web/dist`) lẫn Backend API/WebSocket trên cùng một cổng (`3001`).
 
 ---
 
 ## Yêu cầu hệ thống
 
-- **OS**: Ubuntu Server 20.04+ (hoặc bất kỳ Linux/Windows có Docker)
-- **Docker**: 20.10+ & Docker Compose v2
-- **Tài nguyên tối thiểu**: 2 CPU cores, 2 GB RAM
-- **FFmpeg**: đã cài trong Docker image (hoặc cài local khi dev)
+- **Node.js**: v20+ (khuyến nghị LTS)
+- **FFmpeg**: Cài đặt trực tiếp trên máy chủ và có trong `PATH` (`sudo apt install ffmpeg` trên Ubuntu hoặc `winget install Gyan.FFmpeg` trên Windows)
+- **Docker**: Chỉ dùng để chạy container `alexxit/go2rtc`
+- **PM2**: `npm install -g pm2`
 
 ---
 
-## Cài đặt nhanh (Docker)
+## Cài đặt & Triển khai (PM2 + Docker `go2rtc`)
 
-### 1. Clone & cấu hình
+### 1. Cấu hình biến môi trường
 
 ```bash
-git clone <repo-url> smart_cctv
-cd smart_cctv
 cp .env.example .env
 ```
 
-Chỉnh sửa `.env`:
+Chỉnh sửa file `.env` ở thư mục gốc:
 
 ```env
+PORT=3001
+NODE_ENV=production
+
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your_secure_password
-JWT_SECRET=your_random_secret_key
+ADMIN_PASSWORD=MatKhauManhCuaBan_2026!
+JWT_SECRET=chuoi_ngau_nhien_64_ky_tu_hex_de_ky_token
 
-GO2RTC_URL=http://localhost:1984
-GO2RTC_RTSP_URL=rtsp://localhost:8554
-
-TZ=Asia/Ho_Chi_Minh
+GO2RTC_URL=http://127.0.0.1:1984
+GO2RTC_RTSP_URL=rtsp://127.0.0.1:8554
 ```
 
-### 2. Khởi động
+### 2. Khởi chạy `go2rtc` bằng Docker
 
 ```bash
 docker compose up -d
 ```
 
-### 3. Truy cập
+### 3. Cài đặt thư viện & Build giao diện Web
 
-| Dịch vụ | URL |
-|---|---|
-| Web UI | `http://<server-ip>` |
-| API Server | `http://<server-ip>:3001` |
-| go2rtc Dashboard | `http://<server-ip>:1984` |
+```bash
+# Cài đặt & build Frontend (React -> web/dist)
+cd web
+npm install
+npm run build
 
-Đăng nhập với tài khoản đã cấu hình trong `.env`.
-
----
-
-## Thêm Camera
-
-1. Mở Web UI → Dashboard → **"Thêm Camera"**
-2. Nhập tên, RTSP URL, và các tùy chọn:
-
-```
-rtsp://admin:password@192.168.1.100:554/stream1
+# Cài đặt Backend
+cd ../server
+npm install
+cd ..
 ```
 
-3. Bật **Ghi hình** hoặc **Phát hiện** theo nhu cầu
+### 4. Khởi chạy với PM2
 
----
+Từ thư mục gốc của dự án (nơi có sẵn file `ecosystem.config.js`):
 
-## Cấu hình tính năng
+```bash
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup
+```
 
-### Phát hiện Chuyển động
+Truy cập hệ thống tại: **`http://<server-ip>:3001`** (hoặc cấu hình Nginx/Cloudflare Tunnel trỏ vào `http://127.0.0.1:3001`).
 
-Vào **Settings → Phát hiện**:
-- Khoảng cách quét (ms) — nhỏ hơn = nhanh hơn nhưng tốn CPU
-- Ngưỡng tin cậy (0–1)
-- Tự động quay video khi phát hiện + thời lượng
-
-### Phát hiện Âm thanh Ban đêm
-
-Vào **Settings → Âm thanh**:
-
-| Cài đặt | Mô tả |
-|---|---|
-| Bật phát hiện | Bật/tắt toàn bộ tính năng |
-| Khung giờ ban đêm | Giờ bắt đầu và kết thúc (hỗ trợ qua nửa đêm) |
-| Ngưỡng âm lượng (dBFS) | -30 ≈ nói bình thường · -20 ≈ nói to · -10 ≈ la hét |
-| Tự động quay video | Bật/tắt ghi hình khi phát hiện âm thanh lạ |
-| Thời lượng quay | 5–300 giây |
-
-> Sau khi lưu cài đặt, **restart server** để áp dụng: `docker compose restart api`
+> [!IMPORTANT]
+> Sau khi đăng nhập lần đầu, hãy vào mục **Cài đặt → Bảo mật** trên giao diện Web để đổi mật khẩu quản trị. Mật khẩu sẽ được băm an toàn bằng thuật toán `scrypt` trong cơ sở dữ liệu SQLite.
 
 ---
 
 ## Phát triển (Development)
 
-### Backend
-
 ```bash
+# Terminal 1: Chạy go2rtc trong Docker
+docker compose up -d
+
+# Terminal 2: Chạy Backend với hot-reload (cổng 3001)
 cd server
-npm install
-npm run dev        # nodemon với hot-reload
-```
+npm run dev
 
-### Frontend
-
-```bash
+# Terminal 3: Chạy Frontend Vite dev server (cổng 5173, tự động proxy /api, /media, /ws sang 3001)
 cd web
-npm install
-npm run dev        # Vite dev server tại http://localhost:5173
-```
-
-### Cấu trúc thư mục
-
-```
-smart_cctv/
-├── server/
-│   └── src/
-│       ├── db/             # Schema SQLite
-│       ├── middleware/     # Auth middleware
-│       ├── routes/         # REST API routes
-│       ├── services/       # DetectionWorker, RecordingManager, StorageManager
-│       └── utils/
-├── web/
-│   └── src/
-│       ├── components/     # VideoPlayer
-│       ├── hooks/          # useWebSocket
-│       ├── pages/          # Dashboard, CameraView, Events, Playback, Settings...
-│       └── utils/          # API client
-├── data/                   # Recordings, snapshots, database (auto-created)
-├── docker-compose.yml
-├── go2rtc.yaml
-└── .env
+npm run dev
 ```
 
 ---
@@ -180,43 +132,22 @@ smart_cctv/
 
 | Method | Endpoint | Mô tả |
 |---|---|---|
-| `POST` | `/api/auth/login` | Đăng nhập, trả về JWT |
-| `GET` | `/api/cameras` | Danh sách camera |
-| `POST` | `/api/cameras` | Thêm camera |
-| `PUT` | `/api/cameras/:id` | Cập nhật camera |
+| `POST` | `/api/auth/login` | Đăng nhập (có Rate Limit), cấp HttpOnly Cookie & JWT |
+| `POST` | `/api/auth/logout` | Đăng xuất, xóa HttpOnly Cookie |
+| `PUT` | `/api/auth/password` | Đổi mật khẩu quản trị & thu hồi toàn bộ phiên cũ |
+| `GET` | `/api/cameras` | Danh sách camera (mật khẩu RTSP đã được ẩn `******`) |
+| `POST` | `/api/cameras` | Thêm camera (kiểm tra giao thức `rtsp://`, chống SSRF) |
+| `PUT` | `/api/cameras/:id` | Cập nhật camera & vùng phát hiện chuyển động |
 | `DELETE` | `/api/cameras/:id` | Xóa camera |
+| `POST` | `/api/cameras/:id/webrtc` | Proxy bắt tay WebRTC SDP có xác thực tới `go2rtc` |
+| `GET` | `/api/cameras/:id/hls/:file` | Proxy phát luồng HLS có xác thực tới `go2rtc` |
+| `GET` | `/api/cameras/:id/snapshot` | Proxy chụp ảnh nhanh có xác thực tới `go2rtc` |
 | `GET` | `/api/recordings` | Danh sách bản ghi |
 | `GET` | `/api/events` | Danh sách sự kiện (filter: type, camera, time) |
 | `DELETE` | `/api/events` | Xóa hàng loạt sự kiện |
 | `GET` | `/api/system/settings` | Đọc cài đặt hệ thống |
-| `PUT` | `/api/system/settings` | Cập nhật cài đặt |
+| `PUT` | `/api/system/settings` | Cập nhật & áp dụng ngay cài đặt (Hot-reload) |
 | `GET` | `/api/health` | Health check |
-
-**WebSocket**: `ws://<server>/ws?token=<jwt>` — nhận realtime events (`detection_event`, `recording_started`, `recording_completed`)
-
----
-
-## Tài nguyên hệ thống (ước tính, 4 camera)
-
-| Thành phần | CPU | RAM |
-|---|---|---|
-| go2rtc (streaming) | ~3% | ~50 MB |
-| FFmpeg (recording) | ~3% | ~40 MB |
-| Detection (snapshot) | ~15% | ~200 MB |
-| Sound detection (audio) | ~2% | ~20 MB |
-| API Server | ~2% | ~80 MB |
-| **Tổng** | **~25%** | **~390 MB** |
-
----
-
-## Loại sự kiện
-
-| Type | Mô tả | Badge |
-|---|---|---|
-| `motion` | Phát hiện chuyển động qua snapshot | Xanh lá |
-| `person` | Phát hiện người | Xanh dương |
-| `face` | Nhận diện khuôn mặt | Tím |
-| `sound_alert` | Âm thanh bất thường ban đêm | Cam |
 
 ---
 

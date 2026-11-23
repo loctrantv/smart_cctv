@@ -1,33 +1,55 @@
-const { verifyToken } = require('../utils/auth');
+const { verifyToken, parseCookies } = require('../utils/auth');
 
 /**
- * Express middleware to enforce authentication
+ * Extract token from HttpOnly Cookie, Authorization Bearer header, or short-lived query token
+ */
+function extractRequestToken(req) {
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    return req.headers.authorization.slice(7).trim();
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies.smart_cctv_session) {
+    return cookies.smart_cctv_session;
+  }
+  if (req.query && req.query.token) {
+    return req.query.token;
+  }
+  return null;
+}
+
+/**
+ * Express middleware to enforce authentication and validate user token_version
  */
 module.exports = function authMiddleware(req, res, next) {
   try {
-    // 1. Get token from Authorization header or from query string (for media stream / snapshots)
-    let token = null;
-    
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-      token = req.headers.authorization.split(' ')[1];
-    } else if (req.query && req.query.token) {
-      token = req.query.token;
-    }
-    
+    const token = extractRequestToken(req);
+
     if (!token) {
-      return res.status(401).json({ error: 'Access denied. No token provided.' });
+      return res.status(401).json({ error: 'Truy cập bị từ chối. Vui lòng đăng nhập.' });
     }
-    
-    // 2. Verify token
+
     const decoded = verifyToken(token);
     if (!decoded) {
-      return res.status(401).json({ error: 'Access denied. Invalid or expired token.' });
+      return res.status(401).json({ error: 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn.' });
     }
-    
-    // 3. Attach user payload to request
-    req.user = decoded;
+
+    // Verify user still exists and token_version matches (invalidates tokens when password changes)
+    if (req.db) {
+      const user = req.db
+        .prepare('SELECT id, username, token_version FROM users WHERE username = ?')
+        .get(decoded.username);
+      if (!user || (decoded.v !== undefined && decoded.v !== user.token_version)) {
+        return res.status(401).json({ error: 'Phiên đăng nhập đã hết hiệu lực. Vui lòng đăng nhập lại.' });
+      }
+      req.user = { id: user.id, username: user.username, token_version: user.token_version };
+    } else {
+      req.user = decoded;
+    }
+
     next();
   } catch (err) {
-    res.status(500).json({ error: 'Internal server authentication error' });
+    res.status(500).json({ error: 'Lỗi xác thực máy chủ' });
   }
 };
+
+module.exports.extractRequestToken = extractRequestToken;

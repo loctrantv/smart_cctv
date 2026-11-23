@@ -1,55 +1,19 @@
-version: '3.8'
-
 services:
   # ============================================
   # go2rtc - Lightweight RTSP to WebRTC/HLS proxy
+  # Only go2rtc runs in Docker. API & RTSP ports are bound to 127.0.0.1
+  # so external users cannot bypass Node.js authentication or read RTSP credentials.
   # ============================================
   go2rtc:
     image: alexxit/go2rtc:latest
     container_name: smart_cctv_stream
     restart: unless-stopped
     ports:
-      - "1984:1984"   # Web UI + API
-      - "8554:8554"   # RTSP
-      - "8555:8555"   # WebRTC (TCP)
-      - "8555:8555/udp" # WebRTC (UDP)
+      - "127.0.0.1:1984:1984"   # Web UI + API (Localhost only - proxied via Node.js)
+      - "127.0.0.1:8554:8554"   # RTSP Relay (Localhost only - used by local FFmpeg)
+      - "8555:8555/tcp"         # WebRTC media (TCP)
+      - "8555:8555/udp"         # WebRTC media (UDP)
     volumes:
       - ./go2rtc.yaml:/config/go2rtc.yaml
-    network_mode: host
     environment:
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
-
-  # ============================================
-  # API Server - Node.js Backend
-  # ============================================
-  api:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-    container_name: smart_cctv_api
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./data:/app/data
-      - ./server/src:/app/src
-    environment:
-      - NODE_ENV=${NODE_ENV:-production}
-      - PORT=${PORT:-3001}
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
-      - JWT_SECRET=${JWT_SECRET:-smart_cctv_secure_signing_key_2026}
-      - DB_PATH=${DB_PATH:-/app/data/smart_cctv.db}
-      - RECORDINGS_PATH=${RECORDINGS_PATH:-/app/data/recordings}
-      - SNAPSHOTS_PATH=${SNAPSHOTS_PATH:-/app/data/snapshots}
-      - GO2RTC_URL=${GO2RTC_URL:-http://localhost:1984}
-      - GO2RTC_RTSP_URL=${GO2RTC_RTSP_URL:-rtsp://localhost:8554}
-      - TZ=${TZ:-Asia/Ho_Chi_Minh}
-      - DETECTION_INTERVAL_MS=${DETECTION_INTERVAL_MS:-3000}
-      - DETECTION_ENABLED=${DETECTION_ENABLED:-true}
-      - MAX_STORAGE_GB=${MAX_STORAGE_GB:-100}
-      - RETENTION_DAYS=${RETENTION_DAYS:-30}
-    depends_on:
-      - go2rtc

@@ -13,20 +13,29 @@ export function useWebSocket(token) {
     }
 
     const defaultWsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
-    
-    const wsBase = import.meta.env.VITE_WS_URL || defaultWsUrl;
-    const wsUrl = `${wsBase}/ws?token=${encodeURIComponent(token)}`;
+    const wsBase = (import.meta.env.VITE_WS_URL || defaultWsUrl).replace(/\/+$/, '');
+    // When connecting same-origin, HttpOnly cookie is automatically sent on WS handshake;
+    // still pass token as fallback if cross-origin VITE_WS_URL is configured.
+    const wsUrl = import.meta.env.VITE_WS_URL
+      ? `${wsBase}/ws?token=${encodeURIComponent(token)}`
+      : `${wsBase}/ws`;
+
+    let unmounted = false;
+    let reconnectTimer = null;
 
     function connect() {
+      if (unmounted) return;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        if (!unmounted) setConnected(true);
+      };
       ws.onclose = () => {
+        if (unmounted) return;
         setConnected(false);
-        // Only reconnect if token is still valid/active
         if (localStorage.getItem('smart_cctv_token')) {
-          setTimeout(connect, 3000); // Reconnect
+          reconnectTimer = setTimeout(connect, 3000);
         }
       };
       ws.onerror = () => ws.close();
@@ -34,18 +43,18 @@ export function useWebSocket(token) {
         try {
           const data = JSON.parse(msg.data);
           setLastEvent(data);
-          // Notify type-specific listeners
           const listeners = listenersRef.current.get(data.type);
-          if (listeners) listeners.forEach(fn => fn(data));
-          // Notify wildcard listeners
+          if (listeners) listeners.forEach((fn) => fn(data));
           const allListeners = listenersRef.current.get('*');
-          if (allListeners) allListeners.forEach(fn => fn(data));
+          if (allListeners) allListeners.forEach((fn) => fn(data));
         } catch {}
       };
     }
 
     connect();
     return () => {
+      unmounted = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (wsRef.current) wsRef.current.close();
     };
   }, [token]);

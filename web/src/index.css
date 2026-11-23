@@ -1997,3 +1997,1063 @@ a {
   }
 }
 
+
+
+/* ============================================================
+   VMS / NVR PROFESSIONAL CONTROL CENTER & DUAL-LENS (8:9) UI
+   ============================================================ */
+
+:root {
+  --header-height: 46px;
+  --sidebar-width: 210px;
+  --sidebar-collapsed-width: 62px;
+}
+
+/* ---------- Collapsible VMS Sidebar ---------- */
+.sidebar {
+  transition: width 200ms ease, transform var(--transition-slow);
+  position: relative;
+}
+
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
+}
+
+.sidebar-logo {
+  padding: 10px 14px;
+  height: var(--header-height);
+  justify-content: space-between;
+}
+
+.logo-text-block {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+  flex: 1;
+}
+
+.logo-text-block h1 {
+  font-size: 0.95rem;
+  letter-spacing: 0.5px;
+}
+
+.logo-sub {
+  font-size: 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.sidebar-collapse-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-collapse-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.sidebar.collapsed .sidebar-logo {
+  padding: 10px 6px;
+  justify-content: center;
+  gap: 4px;
+}
+
+.sidebar.collapsed .sidebar-nav a,
+.sidebar.collapsed .sidebar-logout-btn {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.sidebar-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--danger);
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+  border-radius: var(--radius-sm);
+  margin-top: auto;
+  transition: all var(--transition-fast);
+}
+
+.sidebar-logout-btn:hover {
+  background: rgba(255, 59, 59, 0.1);
+}
+
+/* ---------- VMS Control Room Topbar ---------- */
+.vms-topbar {
+  height: var(--header-height);
+  padding: 0 14px;
+  gap: 12px;
+}
+
+.vms-telemetry-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vms-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.vms-stat-pill.is-rec {
+  border-color: rgba(255, 59, 59, 0.45);
+  background: rgba(255, 59, 59, 0.08);
+}
+
+.vms-stat-pill .pill-label {
+  color: var(--text-secondary);
+}
+
+.vms-stat-pill .pill-val {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.vms-digital-clock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
+.vms-digital-clock .clock-time {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.vms-digital-clock .clock-date {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.vms-edge-page {
+  padding: 6px !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.vms-exit-tv-btn {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.85);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: opacity 150ms ease;
+}
+
+.vms-exit-tv-btn:hover {
+  opacity: 1;
+}
+
+/* ---------- VMS Control Strip (Sub-header Toolbar) ---------- */
+.vms-control-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.vms-strip-left,
+.vms-strip-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vms-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.vms-btn-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.vms-strip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+}
+
+.vms-strip-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
+.vms-strip-btn.active {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: rgba(0, 212, 255, 0.35);
+}
+
+.vms-strip-btn.active-tour {
+  background: rgba(0, 255, 136, 0.15);
+  color: var(--success);
+  border-color: rgba(0, 255, 136, 0.4);
+}
+
+.vms-pagination-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 4px;
+}
+
+.vms-page-indicator {
+  font-size: 0.74rem;
+  padding: 0 6px;
+  color: var(--text-primary);
+}
+
+.vms-alert-count {
+  background: var(--warning);
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+/* ---------- Live Matrix Video Wall ---------- */
+.vms-matrix-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+}
+
+.vms-wall-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.vms-wall-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vms-matrix-grid {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 4px;
+  background: #030306;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* Specialized Dual-Lens (8:9) Multi-Column Layouts */
+.vms-matrix-grid.layout-1-split {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.vms-matrix-grid.layout-2-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.vms-matrix-grid.layout-3-col {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.vms-matrix-grid.layout-4-col {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.vms-matrix-grid.layout-2x2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.vms-matrix-grid.layout-3x3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+
+.vms-matrix-cell {
+  position: relative;
+  background: #020204;
+  border: 1px solid #1a1d2d;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.vms-matrix-cell:hover {
+  border-color: var(--accent);
+}
+
+.vms-matrix-cell.is-recording {
+  border-color: rgba(255, 59, 59, 0.45);
+}
+
+@keyframes alert-border-flash {
+  0%, 100% {
+    border-color: #ff9500;
+    box-shadow: inset 0 0 18px rgba(255, 149, 0, 0.55);
+  }
+  50% {
+    border-color: #ff3b30;
+    box-shadow: inset 0 0 28px rgba(255, 59, 48, 0.8);
+  }
+}
+
+.vms-matrix-cell.is-alerting {
+  animation: alert-border-flash 0.9s infinite;
+}
+
+/* ---------- Cell OSD Overlays ---------- */
+.vms-cell-osd-top {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(5, 7, 14, 0.72);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  max-width: calc(100% - 120px);
+}
+
+.vms-ch-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.vms-cam-title {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.vms-osd-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.vms-osd-badge.rec {
+  background: rgba(255, 59, 48, 0.25);
+  color: #ff4d4d;
+  border: 1px solid rgba(255, 59, 48, 0.45);
+}
+
+.vms-osd-badge.ai {
+  background: rgba(0, 255, 136, 0.18);
+  color: #00ff88;
+  border: 1px solid rgba(0, 255, 136, 0.35);
+}
+
+.vms-osd-badge.alert {
+  background: #ff9500;
+  color: #000;
+}
+
+.vms-cell-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.vms-matrix-cell:hover .vms-cell-actions {
+  opacity: 1;
+}
+
+.vms-cell-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(8, 10, 18, 0.78);
+  color: #e8e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.vms-cell-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.vms-cell-action-btn.active-danger {
+  background: rgba(255, 59, 48, 0.85);
+  border-color: #ff3b30;
+  color: #fff;
+}
+
+.vms-cell-action-btn.active-success {
+  background: rgba(0, 204, 106, 0.85);
+  border-color: #00ff88;
+  color: #fff;
+}
+
+/* ---------- Dual-Lens VideoPlayer Engine (Stacked 8:9, Side-by-Side 2x16:9, Top 16:9, Bottom 16:9) ---------- */
+.vms-player-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  background: #020205;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.vms-player-root.is-zoomed {
+  cursor: grab;
+}
+
+.vms-player-root.is-zoomed:active {
+  cursor: grabbing;
+}
+
+/* Mode 1: Stacked 8:9 (Original dual frame) */
+.vms-stacked-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vms-stacked-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vms-dual-divider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.35), transparent);
+  pointer-events: none;
+}
+
+/* Mode 2: Side-by-Side Split (Left: Top 16:9 Lens, Right: Bottom 16:9 Lens) */
+.vms-dual-split-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: #04050a;
+}
+
+.vms-split-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+/* Mode 3 & 4: Single Lens Stage (Top 16:9 or Bottom 16:9) */
+.vms-single-lens-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #000;
+}
+
+/* 16:9 Precision Crop Box for Dual-Lens 8:9 Stream
+   Because the raw stream is two 16:9 frames stacked vertically (total height = 2x single 16:9 frame),
+   setting the crop box to aspect-ratio 16/9 and the inner video to height: 200%
+   cleanly isolates either the top 50% (top: 0) or bottom 50% (top: -100%) without distortion! */
+.vms-crop-box {
+  position: relative;
+  width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+}
+
+.vms-crop-box video {
+  position: absolute;
+  left: 0;
+  width: 100% !important;
+  height: 200% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: fill !important;
+  display: block;
+}
+
+.vms-crop-box.crop-top video {
+  top: 0;
+}
+
+.vms-crop-box.crop-bottom video {
+  top: -100%;
+}
+
+.vms-lens-tag {
+  position: absolute;
+  bottom: 34px;
+  left: 8px;
+  z-index: 15;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  pointer-events: none;
+}
+
+/* Technical OSD Top-Right inside player */
+.vms-osd-tech {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.vms-proto-tag,
+.vms-res-tag,
+.vms-zoom-tag {
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(6, 8, 16, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+}
+
+.vms-proto-tag.webrtc {
+  color: var(--success);
+  border-color: rgba(0, 255, 136, 0.3);
+}
+
+.vms-proto-tag.hls {
+  color: var(--warning);
+  border-color: rgba(255, 170, 0, 0.3);
+}
+
+.vms-zoom-tag {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Bottom Floating Lens Switcher & Media Tools HUD */
+.vms-player-hud-bar {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.vms-player-root:hover .vms-player-hud-bar {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.vms-lens-switcher,
+.vms-media-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 5px;
+  background: rgba(8, 10, 18, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.vms-hud-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: #c8c8d8;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vms-hud-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.vms-hud-btn.active {
+  background: var(--accent);
+  color: #000;
+}
+
+.vms-hud-icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: #c8c8d8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.vms-hud-icon-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.vms-hud-icon-btn.active {
+  color: var(--accent);
+}
+
+.vms-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.vms-retry-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- Right Live Event Feed Drawer ---------- */
+.vms-event-drawer {
+  width: 290px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vms-drawer-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vms-drawer-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vms-drawer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.vms-drawer-item:hover {
+  border-color: var(--accent);
+}
+
+.vms-drawer-thumb {
+  width: 72px;
+  height: 46px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #000;
+  flex-shrink: 0;
+}
+
+.vms-drawer-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vms-drawer-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- CameraView Operator Workstation (2-Column Wide Layout) ---------- */
+.vms-workstation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+}
+
+.vms-channel-select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 0.76rem;
+}
+
+.vms-workstation-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.vms-workstation-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: #030408;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  overflow: hidden;
+}
+
+.vms-stage-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* When in raw 8:9 stacked mode or drawing AI detection zones, constrain width by height * aspectRatio
+   so the overlay coordinates align 100% with the underlying video pixels */
+.vms-stage-frame.zone-drawing-locked,
+.vms-stage-frame.mode-stacked {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+
+.vms-workstation-sidebar {
+  width: 330px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.vms-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vms-kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vms-kv-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* AI Zone Drawing Guides for Dual-Lens 8:9 */
+.vms-zone-lens-boundary {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px dashed rgba(0, 212, 255, 0.75);
+  z-index: 12;
+  pointer-events: none;
+}
+
+.lens-guide-top,
+.lens-guide-bottom {
+  position: absolute;
+  right: 8px;
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--accent);
+}
+
+.lens-guide-top {
+  bottom: 4px;
+}
+
+.lens-guide-bottom {
+  top: 4px;
+}
+
+.vms-zone-draw-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  cursor: crosshair;
+}
+
+.vms-zone-box {
+  position: absolute;
+  border: 2px dashed #ef4444;
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.45);
+  border-radius: 4px;
+  z-index: 16;
+}
+
+.vms-zone-box.drawing {
+  border-style: solid;
+  background: rgba(255, 77, 77, 0.28);
+}
+
+.vms-zone-remove-btn {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  z-index: 20;
+}
+
+.vms-zone-label {
+  position: absolute;
+  bottom: 2px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Timeline Hover Time Tooltip */
+.vms-timeline-tooltip {
+  position: absolute;
+  top: -26px;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 20;
+  white-space: nowrap;
+}
+
+/* Responsive adjustments for Mobile / Tablet */
+@media (max-width: 900px) {
+  .vms-telemetry-strip {
+    display: none;
+  }
+
+  .vms-edge-page {
+    overflow-y: auto !important;
+  }
+
+  .vms-wall-body,
+  .vms-workstation-body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .vms-event-drawer,
+  .vms-workstation-sidebar {
+    width: 100%;
+  }
+
+  .vms-matrix-grid.layout-2-col,
+  .vms-matrix-grid.layout-3-col,
+  .vms-matrix-grid.layout-4-col,
+  .vms-matrix-grid.layout-2x2,
+  .vms-matrix-grid.layout-3x3 {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .vms-dual-split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vms-player-hud-bar,
+  .vms-cell-actions {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -1,6 +1,6 @@
 const express = require('express');
-const path = require('path');
 const fs = require('fs');
+const { resolveSafePath } = require('../utils/security');
 const router = express.Router();
 
 // GET /api/events - List detection events with filters
@@ -8,52 +8,57 @@ router.get('/', (req, res) => {
   try {
     const { camera_id, type, face_id, start, end, limit = 50, offset = 0 } = req.query;
 
-    let where = ['1=1'];
-    let params = [];
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+
+    const where = ['1=1'];
+    const params = [];
 
     if (camera_id) {
       where.push('e.camera_id = ?');
-      params.push(camera_id);
+      params.push(String(camera_id));
     }
 
     if (type) {
       where.push('e.type = ?');
-      params.push(type);
+      params.push(String(type));
     }
 
     if (face_id) {
       where.push('e.face_id = ?');
-      params.push(face_id);
+      params.push(String(face_id));
     }
 
     if (start) {
       where.push('e.timestamp >= ?');
-      params.push(start);
+      params.push(String(start));
     }
 
     if (end) {
       where.push('e.timestamp <= ?');
-      params.push(end);
+      params.push(String(end));
     }
 
-    const events = req.db.prepare(`
-      SELECT e.*, c.name as camera_name,
-        f.name as face_name
-      FROM events e
-      JOIN cameras c ON e.camera_id = c.id
-      LEFT JOIN faces f ON e.face_id = f.id
-      WHERE ${where.join(' AND ')}
-      ORDER BY e.timestamp DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, parseInt(limit), parseInt(offset));
+    const events = req.db
+      .prepare(`
+        SELECT e.*, c.name as camera_name,
+          f.name as face_name
+        FROM events e
+        JOIN cameras c ON e.camera_id = c.id
+        LEFT JOIN faces f ON e.face_id = f.id
+        WHERE ${where.join(' AND ')}
+        ORDER BY e.timestamp DESC
+        LIMIT ? OFFSET ?
+      `)
+      .all(...params, safeLimit, safeOffset);
 
-    const total = req.db.prepare(`
-      SELECT COUNT(*) as count FROM events e WHERE ${where.join(' AND ')}
-    `).get(...params).count;
+    const total = req.db
+      .prepare(`SELECT COUNT(*) as count FROM events e WHERE ${where.join(' AND ')}`)
+      .get(...params).count;
 
-    res.json({ events, total, limit: parseInt(limit), offset: parseInt(offset) });
+    res.json({ events, total, limit: safeLimit, offset: safeOffset });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Không thể tải danh sách sự kiện' });
   }
 });
 
@@ -61,61 +66,67 @@ router.get('/', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const { camera_id, days = 7 } = req.query;
+    const safeDays = Math.min(365, Math.max(1, parseInt(days, 10) || 7));
 
     let cameraFilter = '';
-    let params = [days];
+    const params = [safeDays];
 
     if (camera_id) {
       cameraFilter = 'AND camera_id = ?';
-      params.push(camera_id);
+      params.push(String(camera_id));
     }
 
-    // Events per day
-    const daily = req.db.prepare(`
-      SELECT date(timestamp) as date, type, COUNT(*) as count
-      FROM events
-      WHERE timestamp >= datetime('now', '-' || ? || ' days') ${cameraFilter}
-      GROUP BY date(timestamp), type
-      ORDER BY date ASC
-    `).all(...params);
+    const daily = req.db
+      .prepare(`
+        SELECT date(timestamp) as date, type, COUNT(*) as count
+        FROM events
+        WHERE timestamp >= datetime('now', '-' || ? || ' days') ${cameraFilter}
+        GROUP BY date(timestamp), type
+        ORDER BY date ASC
+      `)
+      .all(...params);
 
-    // Total by type
-    const byType = req.db.prepare(`
-      SELECT type, COUNT(*) as count
-      FROM events
-      WHERE timestamp >= datetime('now', '-' || ? || ' days') ${cameraFilter}
-      GROUP BY type
-    `).all(...params);
+    const byType = req.db
+      .prepare(`
+        SELECT type, COUNT(*) as count
+        FROM events
+        WHERE timestamp >= datetime('now', '-' || ? || ' days') ${cameraFilter}
+        GROUP BY type
+      `)
+      .all(...params);
 
-    // Recent events count
-    const recentCount = req.db.prepare(`
-      SELECT COUNT(*) as count
-      FROM events
-      WHERE timestamp >= datetime('now', '-1 hour') ${cameraFilter}
-    `).get(...(camera_id ? [camera_id] : [])).count;
+    const recentCount = req.db
+      .prepare(`
+        SELECT COUNT(*) as count
+        FROM events
+        WHERE timestamp >= datetime('now', '-1 hour') ${cameraFilter}
+      `)
+      .get(...(camera_id ? [String(camera_id)] : [])).count;
 
     res.json({ daily, byType, recentCount });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Không thể tải thống kê sự kiện' });
   }
 });
 
 // GET /api/events/:id - Get single event
 router.get('/:id', (req, res) => {
   try {
-    const event = req.db.prepare(`
-      SELECT e.*, c.name as camera_name, f.name as face_name
-      FROM events e
-      JOIN cameras c ON e.camera_id = c.id
-      LEFT JOIN faces f ON e.face_id = f.id
-      WHERE e.id = ?
-    `).get(req.params.id);
+    const event = req.db
+      .prepare(`
+        SELECT e.*, c.name as camera_name, f.name as face_name
+        FROM events e
+        JOIN cameras c ON e.camera_id = c.id
+        LEFT JOIN faces f ON e.face_id = f.id
+        WHERE e.id = ?
+      `)
+      .get(req.params.id);
 
-    if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (!event) return res.status(404).json({ error: 'Không tìm thấy sự kiện' });
 
     res.json(event);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Không thể tải thông tin sự kiện' });
   }
 });
 
@@ -123,12 +134,11 @@ router.get('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const event = req.db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
-    if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (!event) return res.status(404).json({ error: 'Không tìm thấy sự kiện' });
 
-    // Delete snapshot image file from disk if exists
     if (event.snapshot_path) {
-      const snapshotFilePath = path.join(req.config.SNAPSHOTS_PATH, event.snapshot_path);
-      if (fs.existsSync(snapshotFilePath)) {
+      const snapshotFilePath = resolveSafePath(req.config.SNAPSHOTS_PATH, event.snapshot_path);
+      if (snapshotFilePath && fs.existsSync(snapshotFilePath)) {
         try {
           fs.unlinkSync(snapshotFilePath);
         } catch (e) {
@@ -138,9 +148,9 @@ router.delete('/:id', (req, res) => {
     }
 
     req.db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
-    res.json({ message: 'Event deleted' });
+    res.json({ message: 'Đã xóa sự kiện' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Không thể xóa sự kiện' });
   }
 });
 
@@ -150,52 +160,52 @@ router.delete('/', (req, res) => {
     const { ids } = req.body || {};
     const { before, camera_id } = req.query;
 
-    let where = [];
-    let params = [];
+    const where = [];
+    const params = [];
 
     if (Array.isArray(ids) && ids.length > 0) {
-      const placeholders = ids.map(() => '?').join(',');
+      const safeIds = ids.slice(0, 500).map(String);
+      const placeholders = safeIds.map(() => '?').join(',');
       where.push(`id IN (${placeholders})`);
-      params.push(...ids);
+      params.push(...safeIds);
     } else {
       if (before) {
         where.push('timestamp < ?');
-        params.push(before);
+        params.push(String(before));
       }
 
       if (camera_id) {
         where.push('camera_id = ?');
-        params.push(camera_id);
+        params.push(String(camera_id));
       }
     }
 
     if (where.length === 0) {
-      return res.status(400).json({ error: 'Specify at least one filter (ids, before, camera_id)' });
+      return res.status(400).json({ error: 'Vui lòng chọn ít nhất một điều kiện xóa' });
     }
 
-    // Find all events to delete their physical snapshot files first
-    const eventsToDelete = req.db.prepare(`
-      SELECT snapshot_path FROM events WHERE ${where.join(' AND ')}
-    `).all(...params);
+    const eventsToDelete = req.db
+      .prepare(`SELECT snapshot_path FROM events WHERE ${where.join(' AND ')}`)
+      .all(...params);
 
-    eventsToDelete.forEach(event => {
+    eventsToDelete.forEach((event) => {
       if (event.snapshot_path) {
-        const snapshotFilePath = path.join(req.config.SNAPSHOTS_PATH, event.snapshot_path);
-        if (fs.existsSync(snapshotFilePath)) {
+        const snapshotFilePath = resolveSafePath(req.config.SNAPSHOTS_PATH, event.snapshot_path);
+        if (snapshotFilePath && fs.existsSync(snapshotFilePath)) {
           try {
             fs.unlinkSync(snapshotFilePath);
-          } catch (e) {}
+          } catch {}
         }
       }
     });
 
-    const result = req.db.prepare(`
-      DELETE FROM events WHERE ${where.join(' AND ')}
-    `).run(...params);
+    const result = req.db
+      .prepare(`DELETE FROM events WHERE ${where.join(' AND ')}`)
+      .run(...params);
 
     res.json({ deleted: result.changes });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Không thể xóa danh sách sự kiện' });
   }
 });
 

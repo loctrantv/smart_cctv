@@ -1,5 +1,25 @@
 const Database = require('better-sqlite3');
-const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const { hashPassword } = require('../utils/auth');
+
+const ALLOWED_SETTINGS_KEYS = new Set([
+  'storage.max_gb',
+  'storage.retention_days',
+  'detection.interval_ms',
+  'detection.confidence_threshold',
+  'detection.person_enabled',
+  'detection.face_enabled',
+  'recording.segment_minutes',
+  'recording.on_motion_enabled',
+  'recording.on_motion_duration',
+  'system.timezone',
+  'sound.detection_enabled',
+  'sound.night_start',
+  'sound.night_end',
+  'sound.threshold_db',
+  'sound.recording_enabled',
+  'sound.recording_duration',
+]);
 
 function initDatabase(dbPath) {
   const db = new Database(dbPath);
@@ -10,6 +30,18 @@ function initDatabase(dbPath) {
 
   // Create tables
   db.exec(`
+    -- ============================================
+    -- Users (Admin authentication with scrypt hash)
+    -- ============================================
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      token_version INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     -- ============================================
     -- Cameras
     -- ============================================
@@ -25,6 +57,7 @@ function initDatabase(dbPath) {
       snapshot_url TEXT,
       location TEXT DEFAULT '',
       notes TEXT DEFAULT '',
+      detection_zone TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -117,11 +150,29 @@ function initDatabase(dbPath) {
     );
   `);
 
-  // Safe migration: add detection_zone to cameras if not exists
+  // Safe migration: add detection_zone to cameras if upgrading from older DB
   try {
     db.exec("ALTER TABLE cameras ADD COLUMN detection_zone TEXT DEFAULT ''");
-  } catch (e) {
+  } catch {
     // Column already exists
+  }
+
+  // Seed initial admin user from environment variables if no user exists
+  const existingUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+  if (existingUsers === 0) {
+    const adminUser = (process.env.ADMIN_USERNAME || 'admin').trim();
+    const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
+    if (adminPass === 'admin123' || adminPass === 'ChangeMe_StrongPassword_2026!') {
+      console.warn(
+        '[SECURITY WARNING] Admin account initialized with default password from .env. ' +
+        'Please change your password immediately in Settings -> Bảo mật!'
+      );
+    }
+    db.prepare(`
+      INSERT INTO users (id, username, password_hash, token_version)
+      VALUES (?, ?, ?, 1)
+    `).run(uuidv4(), adminUser, hashPassword(adminPass));
+    console.log(`[DB] Seeded admin account: ${adminUser}`);
   }
 
   // Insert default settings if not exist
@@ -130,16 +181,16 @@ function initDatabase(dbPath) {
   `);
 
   const defaults = {
-    'storage.max_gb': '100',
-    'storage.retention_days': '30',
-    'detection.interval_ms': '3000',
+    'storage.max_gb': process.env.MAX_STORAGE_GB || '100',
+    'storage.retention_days': process.env.RETENTION_DAYS || '30',
+    'detection.interval_ms': process.env.DETECTION_INTERVAL_MS || '3000',
     'detection.confidence_threshold': '0.5',
     'detection.person_enabled': '1',
     'detection.face_enabled': '1',
     'recording.segment_minutes': '15',
     'recording.on_motion_enabled': '0',
     'recording.on_motion_duration': '30',
-    'system.timezone': 'Asia/Ho_Chi_Minh',
+    'system.timezone': process.env.TZ || 'Asia/Ho_Chi_Minh',
     // Sound detection settings
     'sound.detection_enabled': '0',
     'sound.night_start': '22',
@@ -151,7 +202,7 @@ function initDatabase(dbPath) {
 
   const insertMany = db.transaction(() => {
     for (const [key, value] of Object.entries(defaults)) {
-      insertSetting.run(key, value);
+      insertSetting.run(key, String(value));
     }
   });
   insertMany();
@@ -160,4 +211,4 @@ function initDatabase(dbPath) {
   return db;
 }
 
-module.exports = { initDatabase };
+module.exports = { initDatabase, ALLOWED_SETTINGS_KEYS };
