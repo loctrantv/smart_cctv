@@ -307,25 +307,25 @@ router.get('/:id/snapshot', async (req, res) => {
   }
 });
 
-// GET /api/cameras/:id/hls/:file - Authenticated HLS playlist & segment proxy
-router.get('/:id/hls/:file', async (req, res) => {
+// GET /api/cameras/:id/hls/* - Authenticated HLS playlist & segment proxy (supports nested hls/ paths from go2rtc)
+router.get('/:id/hls/*', async (req, res) => {
   try {
     const camera = req.db.prepare('SELECT * FROM cameras WHERE id = ?').get(req.params.id);
     if (!camera) return res.status(404).json({ error: 'Không tìm thấy camera' });
 
-    const file = req.params.file;
-    // Allow only safe HLS filenames
-    if (!/^[a-zA-Z0-9._-]+$/.test(file)) {
-      return res.status(400).json({ error: 'Tên file HLS không hợp lệ' });
+    const subPath = req.params[0] || '';
+    // Allow safe HLS subpaths (e.g. stream.m3u8, hls/playlist.m3u8, hls/segment.ts, hls/init.mp4)
+    if (!subPath || subPath.includes('..') || !/^[a-zA-Z0-9._/-]+$/.test(subPath)) {
+      return res.status(400).json({ error: 'Đường dẫn HLS không hợp lệ' });
     }
 
     const queryParams = new URLSearchParams(req.query);
     queryParams.delete('token');
-    if (!queryParams.has('src')) {
+    if (!queryParams.has('src') && !queryParams.has('id')) {
       queryParams.set('src', camera.stream_id);
     }
 
-    const upstream = await req.go2rtcClient.fetchRaw(`/api/${file}?${queryParams.toString()}`);
+    const upstream = await req.go2rtcClient.fetchRaw(`/api/${subPath}?${queryParams.toString()}`);
     if (!upstream.ok) {
       return res.status(upstream.status).end();
     }
