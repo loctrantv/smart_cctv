@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { login } from '../utils/api';
-import { Shield, Lock, User, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Shield, Lock, User, AlertCircle, Eye, EyeOff, Radio } from 'lucide-react';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -25,10 +25,8 @@ export default function Login({ onLoginSuccess }) {
       localStorage.setItem('smart_cctv_user', JSON.stringify(data.user));
       onLoginSuccess(data.token, data.user);
     } catch (err) {
-      console.error(err);
       setError(
-        err.response?.data?.error || 
-        'Không thể kết nối đến máy chủ. Vui lòng thử lại.'
+        err.response?.data?.error || 'Không thể kết nối đến máy chủ giám sát. Vui lòng thử lại.'
       );
     } finally {
       setLoading(false);
@@ -36,14 +34,20 @@ export default function Login({ onLoginSuccess }) {
   };
 
   return (
-    <div className="login-wrapper">
-      <div className="login-card">
+    <div className="login-wrapper vms-login-bg">
+      <div className="login-card vms-login-console">
         <div className="login-header">
           <div className="login-logo-icon">
             <Shield size={24} />
           </div>
-          <h2>Smart CCTV</h2>
-          <p>Hệ thống giám sát thông minh</p>
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <span className="vms-osd-badge ai">
+              <Radio size={10} /> ON-PREMISE NVR
+            </span>
+            <span className="vms-osd-badge rec">DUAL-LENS VMS</span>
+          </div>
+          <h2>SMART CCTV VMS</h2>
+          <p>Trung tâm điều khiển & giám sát an ninh</p>
         </div>
 
         {error && (
@@ -55,23 +59,23 @@ export default function Login({ onLoginSuccess }) {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label">Tên đăng nhập</label>
+            <label className="form-label">Tài khoản vận hành</label>
             <div style={{ position: 'relative' }}>
-              <User 
-                size={16} 
-                style={{ 
-                  position: 'absolute', 
-                  left: 12, 
-                  top: '50%', 
-                  transform: 'translateY(-50%)', 
-                  color: 'var(--text-secondary)' 
-                }} 
+              <User
+                size={16}
+                style={{
+                  position: 'absolute',
+                  left: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-secondary)',
+                }}
               />
               <input
                 type="text"
                 className="form-input"
                 style={{ paddingLeft: 36 }}
-                placeholder="Tên đăng nhập"
+                placeholder="Nhập tên tài khoản"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={loading}
@@ -81,23 +85,23 @@ export default function Login({ onLoginSuccess }) {
           </div>
 
           <div className="form-group" style={{ marginBottom: 24 }}>
-            <label className="form-label">Mật khẩu</label>
+            <label className="form-label">Mật khẩu bảo mật</label>
             <div style={{ position: 'relative' }}>
-              <Lock 
-                size={16} 
-                style={{ 
-                  position: 'absolute', 
-                  left: 12, 
-                  top: '50%', 
-                  transform: 'translateY(-50%)', 
-                  color: 'var(--text-secondary)' 
-                }} 
+              <Lock
+                size={16}
+                style={{
+                  position: 'absolute',
+                  left: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-secondary)',
+                }}
               />
               <input
                 type={showPassword ? 'text' : 'password'}
                 className="form-input"
                 style={{ paddingLeft: 36, paddingRight: 36 }}
-                placeholder="Mật khẩu"
+                placeholder="Nhập mật khẩu"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
@@ -116,7 +120,7 @@ export default function Login({ onLoginSuccess }) {
                   cursor: 'pointer',
                   padding: 0,
                   display: 'flex',
-                  alignItems: 'center'
+                  alignItems: 'center',
                 }}
                 disabled={loading}
               >
@@ -125,12 +129,8 @@ export default function Login({ onLoginSuccess }) {
             </div>
           </div>
 
-          <button 
-            type="submit" 
-            className="login-btn" 
-            disabled={loading}
-          >
-            {loading ? 'Đang xác thực...' : 'Đăng nhập'}
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? 'Đang xác thực phiên...' : 'Truy cập Hệ thống'}
           </button>
         </form>
       </div>

@@ -95,6 +95,10 @@ export const addFace = (formData) =>
   api
     .post('/faces', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
     .then((r) => r.data);
+export const updateFace = (id, formData) =>
+  api
+    .put(`/faces/${id}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    .then((r) => r.data);
 export const deleteFace = (id) => api.delete(`/faces/${id}`).then((r) => r.data);
 
 // System

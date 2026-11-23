@@ -4,6 +4,7 @@ import {
   getSettings,
   updateSettings,
   getCameras,
+  updateCamera,
   deleteCamera,
   changePassword,
 } from '../utils/api';
@@ -19,6 +20,9 @@ import {
   Trash2,
   Shield,
   Lock,
+  Edit3,
+  Check,
+  X,
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -27,9 +31,15 @@ export default function SettingsPage() {
   const [cameras, setCameras] = useState([]);
   const [activeTab, setActiveTab] = useState('general');
   const [saving, setSaving] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+
+  // Inline Camera Edit State
+  const [editingCamId, setEditingCamId] = useState(null);
+  const [camForm, setCamForm] = useState({ name: '', location: '', rtsp_url: '' });
+  const [camSaving, setCamSaving] = useState(false);
 
   // Password change state
-  const { user, onAuthUpdate } = useApp();
+  const { user, onAuthUpdate, refreshGlobalStats } = useApp();
   const [pwdForm, setPwdForm] = useState({
     newUsername: user?.username || 'admin',
     currentPassword: '',
@@ -39,17 +49,26 @@ export default function SettingsPage() {
   const [pwdSaving, setPwdSaving] = useState(false);
   const [pwdMsg, setPwdMsg] = useState({ type: '', text: '' });
 
-  useEffect(() => {
+  const loadAll = () => {
     getSystemInfo().then(setSysInfo).catch(() => {});
     getSettings().then(setSettings).catch(() => {});
     getCameras().then(setCameras).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadAll();
   }, []);
+
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 3500);
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await updateSettings(settings);
-      alert('Đã lưu và áp dụng cài đặt thành công (không cần khởi động lại server)!');
+      showToast('Đã lưu và áp dụng cài đặt thành công (Hot-Reload)!');
     } catch (err) {
       alert('Lỗi: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -57,11 +76,45 @@ export default function SettingsPage() {
     }
   };
 
+  const startEditCamera = (cam) => {
+    setEditingCamId(cam.id);
+    setCamForm({
+      name: cam.name || '',
+      location: cam.location || '',
+      rtsp_url: '', // Keep empty unless operator wants to overwrite RTSP URL
+    });
+  };
+
+  const handleSaveCameraEdit = async (camId) => {
+    setCamSaving(true);
+    try {
+      const payload = {
+        name: camForm.name,
+        location: camForm.location,
+      };
+      if (camForm.rtsp_url && camForm.rtsp_url.trim()) {
+        payload.rtsp_url = camForm.rtsp_url.trim();
+      }
+      await updateCamera(camId, payload);
+      setEditingCamId(null);
+      const updatedList = await getCameras();
+      setCameras(updatedList);
+      if (refreshGlobalStats) refreshGlobalStats();
+      showToast('Đã cập nhật thông tin kênh camera!');
+    } catch (err) {
+      alert('Không thể cập nhật camera: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setCamSaving(false);
+    }
+  };
+
   const handleDeleteCamera = async (id) => {
-    if (!confirm('Xóa camera này? Tất cả recordings và events sẽ bị xóa.')) return;
+    if (!confirm('Xóa kênh camera này? Tất cả bản ghi và sự kiện liên quan sẽ bị xóa.')) return;
     try {
       await deleteCamera(id);
       setCameras(cameras.filter((c) => c.id !== id));
+      if (refreshGlobalStats) refreshGlobalStats();
+      showToast('Đã xóa kênh camera');
     } catch (err) {
       alert('Lỗi khi xóa camera: ' + (err.response?.data?.error || err.message));
     }
@@ -123,22 +176,34 @@ export default function SettingsPage() {
   };
 
   const TABS = [
-    { id: 'general', label: 'Tổng quát' },
-    { id: 'storage', label: 'Lưu trữ' },
-    { id: 'detection', label: 'Phát hiện' },
-    { id: 'sound', label: 'Âm thanh' },
+    { id: 'general', label: 'Kênh Camera' },
+    { id: 'storage', label: 'Lưu trữ NVR' },
+    { id: 'detection', label: 'Phát hiện AI' },
+    { id: 'sound', label: 'Âm thanh đêm' },
     { id: 'security', label: 'Bảo mật' },
-    { id: 'system', label: 'Hệ thống' },
+    { id: 'system', label: 'Phần cứng' },
   ];
 
   const hasSaveButton = ['storage', 'detection', 'sound'].includes(activeTab);
 
+  const maxQuotaBytes = (parseInt(settings['storage.max_gb'] || '100', 10) || 100) * 1024 * 1024 * 1024;
+  const usedStorageBytes = sysInfo?.app?.totalStorageUsed || 0;
+  const usedQuotaPct = Math.min(100, Math.round((usedStorageBytes / maxQuotaBytes) * 100));
+
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto' }}>
+    <div style={{ maxWidth: 880, margin: '0 auto' }}>
+      {toastMsg && (
+        <div className="vms-toast-banner">
+          <Check size={15} />
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       <div className="tabs">
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            type="button"
             className={`tab ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
           >
@@ -147,45 +212,134 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {/* ── General ── */}
+      {/* ── General: Camera Channel Management with Inline Editing ── */}
       {activeTab === 'general' && (
         <div className="card">
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
-              <Camera size={16} /> Quản lý Camera
+              <Camera size={16} style={{ color: 'var(--accent)' }} /> Danh Sách Kênh Camera ({cameras.length})
             </span>
           </div>
-          <div className="card-body">
+          <div className="card-body" style={{ padding: 14 }}>
             {cameras.length === 0 ? (
-              <p className="text-muted">Chưa có camera nào</p>
+              <p className="text-muted text-center p-4">Chưa có camera nào được cấu hình</p>
             ) : (
               <div className="flex flex-col gap-3">
-                {cameras.map((cam) => (
-                  <div key={cam.id} className="card" style={{ background: 'var(--bg-secondary)' }}>
-                    <div className="card-body" style={{ padding: '12px 16px' }}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-bold text-sm">{cam.name}</div>
-                          <div className="text-xs text-muted text-mono mt-2">{cam.rtsp_url}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className={`status-dot ${cam.enabled ? '' : 'offline'}`} />
-                          <span className="text-xs mr-2">{cam.enabled ? 'Online' : 'Offline'}</span>
-                          <div className="h-4 w-[1px] bg-border mx-1"></div>
-                          <button
-                            className="btn btn-danger btn-sm"
-                            style={{ height: '32px', padding: '0 8px' }}
-                            onClick={() => handleDeleteCamera(cam.id)}
-                            title="Xóa camera"
-                          >
-                            <Trash2 size={14} />
-                            <span className="hidden sm:inline ml-1 text-xs">Xóa</span>
-                          </button>
-                        </div>
+                {cameras.map((cam, idx) => {
+                  const isEditing = editingCamId === cam.id;
+                  return (
+                    <div
+                      key={cam.id}
+                      className="card"
+                      style={{ background: 'var(--bg-secondary)' }}
+                    >
+                      <div className="card-body" style={{ padding: '12px 16px' }}>
+                        {isEditing ? (
+                          <div className="flex flex-col gap-3">
+                            <div
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1fr 1fr',
+                                gap: 10,
+                              }}
+                            >
+                              <div>
+                                <label className="form-label">Tên kênh camera</label>
+                                <input
+                                  className="form-input"
+                                  value={camForm.name}
+                                  onChange={(e) =>
+                                    setCamForm({ ...camForm, name: e.target.value })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label">Vị trí lắp đặt</label>
+                                <input
+                                  className="form-input"
+                                  value={camForm.location}
+                                  onChange={(e) =>
+                                    setCamForm({ ...camForm, location: e.target.value })
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="form-label">
+                                RTSP URL mới (Để trống nếu giữ nguyên: {cam.rtsp_url})
+                              </label>
+                              <input
+                                className="form-input text-mono text-xs"
+                                placeholder="rtsp://admin:password@192.168.1.100:554/stream1"
+                                value={camForm.rtsp_url}
+                                onChange={(e) =>
+                                  setCamForm({ ...camForm, rtsp_url: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setEditingCamId(null)}
+                              >
+                                <X size={13} /> Hủy
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                disabled={camSaving}
+                                onClick={() => handleSaveCameraEdit(cam.id)}
+                              >
+                                <Check size={13} /> {camSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="vms-ch-tag text-mono">
+                                  CH{String(idx + 1).padStart(2, '0')}
+                                </span>
+                                <span className="font-bold text-sm">{cam.name}</span>
+                                {cam.location && (
+                                  <span className="text-xs text-muted">· {cam.location}</span>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted text-mono mt-1 truncate">
+                                {cam.rtsp_url}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className={`status-dot ${cam.enabled ? '' : 'offline'}`} />
+                              <span className="text-xs mr-1">
+                                {cam.enabled ? 'Online' : 'Offline'}
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ height: 30, padding: '0 10px' }}
+                                onClick={() => startEditCamera(cam)}
+                              >
+                                <Edit3 size={13} /> Sửa
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                style={{ height: 30, padding: '0 10px' }}
+                                onClick={() => handleDeleteCamera(cam.id)}
+                                title="Xóa camera"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -197,27 +351,36 @@ export default function SettingsPage() {
         <div className="card">
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
-              <HardDrive size={16} /> Lưu trữ
+              <HardDrive size={16} style={{ color: 'var(--accent)' }} /> Quản Lý Lưu Trữ NVR
             </span>
           </div>
-          <div className="card-body">
+          <div className="card-body" style={{ padding: 16 }}>
             {sysInfo && (
-              <div className="stats-grid mb-4">
-                <div className="stat-card">
-                  <div className="stat-icon cyan">
-                    <HardDrive size={18} />
-                  </div>
-                  <div>
-                    <div className="stat-value text-sm">
-                      {formatBytes(sysInfo.app.totalStorageUsed)}
-                    </div>
-                    <div className="stat-label">Đã sử dụng</div>
-                  </div>
+              <div className="vms-meter-box mb-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold">Dung lượng bản ghi NVR đã dùng</span>
+                  <span className="text-xs text-mono">
+                    {formatBytes(usedStorageBytes)} / {settings['storage.max_gb'] || '100'} GB ({usedQuotaPct}%)
+                  </span>
+                </div>
+                <div className="vms-meter-rail">
+                  <div
+                    className="vms-meter-fill"
+                    style={{
+                      width: `${usedQuotaPct}%`,
+                      background:
+                        usedQuotaPct > 85
+                          ? 'var(--danger)'
+                          : usedQuotaPct > 65
+                          ? 'var(--warning)'
+                          : 'var(--accent)',
+                    }}
+                  />
                 </div>
               </div>
             )}
             <div className="form-group">
-              <label className="form-label">Dung lượng tối đa (GB)</label>
+              <label className="form-label">Hạn mức dung lượng lưu trữ tối đa (GB)</label>
               <input
                 className="form-input"
                 type="number"
@@ -226,7 +389,7 @@ export default function SettingsPage() {
               />
             </div>
             <div className="form-group mt-3">
-              <label className="form-label">Thời gian lưu trữ (ngày)</label>
+              <label className="form-label">Thời gian tự động xoay vòng xóa file cũ (ngày)</label>
               <input
                 className="form-input"
                 type="number"
@@ -237,7 +400,7 @@ export default function SettingsPage() {
               />
             </div>
             <div className="form-group mt-3">
-              <label className="form-label">Thời lượng mỗi đoạn ghi (phút)</label>
+              <label className="form-label">Thời lượng cắt file mỗi đoạn ghi liên tục (phút)</label>
               <input
                 className="form-input"
                 type="number"
@@ -256,12 +419,12 @@ export default function SettingsPage() {
         <div className="card">
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
-              <Activity size={16} /> Phát hiện Chuyển động
+              <Activity size={16} style={{ color: 'var(--success)' }} /> Phát Hiện Chuyển Động AI
             </span>
           </div>
-          <div className="card-body">
+          <div className="card-body" style={{ padding: 16 }}>
             <div className="form-group">
-              <label className="form-label">Khoảng cách quét (ms)</label>
+              <label className="form-label">Chu kỳ quét khung hình (ms)</label>
               <input
                 className="form-input"
                 type="number"
@@ -271,12 +434,12 @@ export default function SettingsPage() {
                 }
               />
               <div className="text-xs text-muted mt-2">
-                Giá trị nhỏ = phát hiện nhanh hơn nhưng tốn CPU hơn
+                Giá trị nhỏ = phát hiện nhạy hơn (Khuyến nghị: 2000 – 4000 ms)
               </div>
             </div>
 
             <div className="form-group mt-3">
-              <label className="form-label">Ngưỡng tin cậy (0–1)</label>
+              <label className="form-label">Ngưỡng tin cậy (0.0 – 1.0)</label>
               <input
                 className="form-input"
                 type="number"
@@ -293,7 +456,7 @@ export default function SettingsPage() {
             <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
 
             <div className="form-group">
-              <label className="form-label">Quay phim khi phát hiện chuyển động</label>
+              <label className="form-label">Tự động ghi hình sự kiện khi phát hiện chuyển động</label>
               <select
                 className="form-input"
                 value={settings['recording.on_motion_enabled'] || '0'}
@@ -301,13 +464,13 @@ export default function SettingsPage() {
                   setSettings({ ...settings, 'recording.on_motion_enabled': e.target.value })
                 }
               >
-                <option value="0">Tắt (Chỉ chụp ảnh sự kiện)</option>
-                <option value="1">Bật (Tự động quay video khi có chuyển động)</option>
+                <option value="0">Tắt (Chỉ chụp ảnh Snapshot sự kiện)</option>
+                <option value="1">Bật (Tự động quay video MP4 khi có chuyển động)</option>
               </select>
             </div>
 
             <div className="form-group mt-3">
-              <label className="form-label">Thời lượng quay khi có chuyển động (giây)</label>
+              <label className="form-label">Thời lượng đoạn video sự kiện (giây)</label>
               <input
                 className="form-input"
                 type="number"
@@ -318,9 +481,6 @@ export default function SettingsPage() {
                   setSettings({ ...settings, 'recording.on_motion_duration': e.target.value })
                 }
               />
-              <div className="text-xs text-muted mt-2">
-                Thời gian quay video sau mỗi lần phát hiện chuyển động (5–300 giây)
-              </div>
             </div>
           </div>
         </div>
@@ -332,12 +492,12 @@ export default function SettingsPage() {
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
               <Volume2 size={16} style={{ color: '#f59e0b' }} />
-              Phát hiện Âm thanh Lạ Ban Đêm
+              Phát Hiện Âm Thanh Bất Thường Ban Đêm
             </span>
           </div>
-          <div className="card-body">
+          <div className="card-body" style={{ padding: 16 }}>
             <div className="form-group">
-              <label className="form-label">Bật phát hiện âm thanh</label>
+              <label className="form-label">Trạng thái kích hoạt</label>
               <select
                 className="form-input"
                 value={settings['sound.detection_enabled'] || '0'}
@@ -346,22 +506,15 @@ export default function SettingsPage() {
                 }
               >
                 <option value="0">Tắt</option>
-                <option value="1">Bật — lắng nghe âm thanh trong khung giờ đã cấu hình</option>
+                <option value="1">Bật — Giám sát cường độ âm thanh RMS trong khung giờ đêm</option>
               </select>
-              <div className="text-xs text-muted mt-2">
-                Phát hiện tiếng động bất thường (tiếng la hét, va đập...) trong khung giờ ban đêm và
-                tạo sự kiện cảnh báo.
-              </div>
             </div>
 
-            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
+            <hr style={{ margin: '18px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
 
-            <div className="font-bold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
-              Khung giờ ban đêm
-            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
-                <label className="form-label">Bắt đầu (giờ)</label>
+                <label className="form-label">Giờ bắt đầu trực đêm (0–23h)</label>
                 <input
                   className="form-input"
                   type="number"
@@ -372,10 +525,9 @@ export default function SettingsPage() {
                     setSettings({ ...settings, 'sound.night_start': e.target.value })
                   }
                 />
-                <div className="text-xs text-muted mt-1">Ví dụ: 22 → 22:00</div>
               </div>
               <div className="form-group">
-                <label className="form-label">Kết thúc (giờ)</label>
+                <label className="form-label">Giờ kết thúc trực đêm (0–23h)</label>
                 <input
                   className="form-input"
                   type="number"
@@ -384,28 +536,11 @@ export default function SettingsPage() {
                   value={settings['sound.night_end'] ?? '6'}
                   onChange={(e) => setSettings({ ...settings, 'sound.night_end': e.target.value })}
                 />
-                <div className="text-xs text-muted mt-1">Ví dụ: 6 → 06:00</div>
               </div>
             </div>
-            <div
-              className="text-xs text-muted mt-1"
-              style={{
-                padding: '8px 12px',
-                background: 'var(--bg-secondary)',
-                borderRadius: 8,
-                marginTop: 8,
-              }}
-            >
-              Hỗ trợ qua nửa đêm — ví dụ: 22:00 → 06:00 sẽ hoạt động đúng.
-            </div>
 
-            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
-
-            <div className="font-bold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
-              Nhạy cảm âm thanh
-            </div>
-            <div className="form-group">
-              <label className="form-label">Ngưỡng âm lượng (dBFS)</label>
+            <div className="form-group mt-3">
+              <label className="form-label">Ngưỡng kích hoạt âm lượng (dBFS)</label>
               <input
                 className="form-input"
                 type="number"
@@ -415,23 +550,13 @@ export default function SettingsPage() {
                 value={settings['sound.threshold_db'] ?? '-20'}
                 onChange={(e) => setSettings({ ...settings, 'sound.threshold_db': e.target.value })}
               />
-              <div className="text-xs text-muted mt-2">
-                Giá trị càng gần 0 → chỉ bắt tiếng rất to.
-                <br />
-                Khuyến nghị: <strong>-25 đến -15 dBFS</strong>.
-                <br />
-                Ví dụ: -30 dBFS ≈ tiếng nói bình thường · -20 dBFS ≈ tiếng nói to · -10 dBFS ≈ tiếng
-                la hét.
+              <div className="text-xs text-muted mt-1">
+                -30 dBFS ≈ nói chuyện · -20 dBFS ≈ tiếng động lớn · -10 dBFS ≈ tiếng va đập mạnh / la hét
               </div>
             </div>
 
-            <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
-
-            <div className="font-bold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
-              Ghi hình khi phát hiện
-            </div>
-            <div className="form-group">
-              <label className="form-label">Tự động quay video khi phát hiện âm thanh lạ</label>
+            <div className="form-group mt-3">
+              <label className="form-label">Tự động quay video khi có âm thanh lạ</label>
               <select
                 className="form-input"
                 value={settings['sound.recording_enabled'] || '1'}
@@ -439,8 +564,8 @@ export default function SettingsPage() {
                   setSettings({ ...settings, 'sound.recording_enabled': e.target.value })
                 }
               >
-                <option value="0">Tắt — chỉ tạo sự kiện cảnh báo</option>
-                <option value="1">Bật — tự động quay video khi phát hiện</option>
+                <option value="0">Tắt — Chỉ ghi nhận sự kiện cảnh báo</option>
+                <option value="1">Bật — Tự động ghi hình kênh phát sinh tiếng động</option>
               </select>
             </div>
 
@@ -456,9 +581,6 @@ export default function SettingsPage() {
                   setSettings({ ...settings, 'sound.recording_duration': e.target.value })
                 }
               />
-              <div className="text-xs text-muted mt-2">
-                Thời gian quay video sau khi phát hiện âm thanh lạ (5–300 giây)
-              </div>
             </div>
           </div>
         </div>
@@ -469,10 +591,10 @@ export default function SettingsPage() {
         <div className="card">
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
-              <Shield size={16} /> Bảo mật Tài khoản Quản trị
+              <Shield size={16} style={{ color: 'var(--accent)' }} /> Bảo Mật Tài Khoản Quản Trị
             </span>
           </div>
-          <div className="card-body">
+          <div className="card-body" style={{ padding: 16 }}>
             {pwdMsg.text && (
               <div
                 style={{
@@ -519,7 +641,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="form-group mt-3">
-                <label className="form-label">Mật khẩu mới * (Tối thiểu 8 ký tự)</label>
+                <label className="form-label">Mật khẩu mới * (Tối thiểu 8 ký tự, băm scrypt)</label>
                 <input
                   className="form-input"
                   type="password"
@@ -542,7 +664,7 @@ export default function SettingsPage() {
 
               <div className="mt-4 flex justify-end">
                 <button type="submit" className="btn btn-primary" disabled={pwdSaving}>
-                  <Lock size={16} /> {pwdSaving ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}
+                  <Lock size={15} /> {pwdSaving ? 'Đang cập nhật...' : 'Cập nhật thông tin bảo mật'}
                 </button>
               </div>
             </form>
@@ -550,58 +672,94 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── System Info ── */}
+      {/* ── System Hardware Telemetry ── */}
       {activeTab === 'system' && sysInfo && (
         <div className="card">
           <div className="card-header">
             <span className="font-bold flex items-center gap-2">
-              <Cpu size={16} /> Thông tin hệ thống
+              <Cpu size={16} style={{ color: 'var(--accent)' }} /> Giám Sát Tài Nguyên Máy Chủ NVR
             </span>
             <button
+              type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => getSystemInfo().then(setSysInfo)}
             >
               <RefreshCw size={12} /> Làm mới
             </button>
           </div>
-          <div className="card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              <div>
-                <div className="text-xs text-muted">Hostname</div>
-                <div className="text-sm">{sysInfo.system.hostname}</div>
+          <div className="card-body" style={{ padding: 16 }}>
+            {/* Memory & Disk Progress Gauges */}
+            <div className="vms-meter-box mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold">Bộ nhớ RAM hệ thống</span>
+                <span className="text-xs text-mono">
+                  {formatBytes(sysInfo.system.usedMemory)} / {formatBytes(sysInfo.system.totalMemory)} (
+                  {sysInfo.system.memoryPercent}%)
+                </span>
               </div>
-              <div>
-                <div className="text-xs text-muted">Platform</div>
-                <div className="text-sm">
+              <div className="vms-meter-rail">
+                <div
+                  className="vms-meter-fill"
+                  style={{
+                    width: `${sysInfo.system.memoryPercent}%`,
+                    background:
+                      sysInfo.system.memoryPercent > 85 ? 'var(--danger)' : 'var(--accent)',
+                  }}
+                />
+              </div>
+            </div>
+
+            {sysInfo.disk && sysInfo.disk.total > 0 && (
+              <div className="vms-meter-box mb-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold">Ổ cứng chứa bản ghi (Disk Partition)</span>
+                  <span className="text-xs text-mono">
+                    Đã dùng {formatBytes(sysInfo.disk.used)} / Tổng {formatBytes(sysInfo.disk.total)} (Còn trống{' '}
+                    {formatBytes(sysInfo.disk.free)})
+                  </span>
+                </div>
+                <div className="vms-meter-rail">
+                  <div
+                    className="vms-meter-fill"
+                    style={{
+                      width: `${Math.round((sysInfo.disk.used / sysInfo.disk.total) * 100)}%`,
+                      background: 'var(--success)',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="vms-kv-list">
+              <div className="vms-kv-row">
+                <span className="text-xs text-muted">Tên máy chủ (Hostname)</span>
+                <span className="text-xs text-mono font-bold">{sysInfo.system.hostname}</span>
+              </div>
+              <div className="vms-kv-row">
+                <span className="text-xs text-muted">Hệ điều hành</span>
+                <span className="text-xs text-mono">
                   {sysInfo.system.platform} ({sysInfo.system.arch})
-                </div>
+                </span>
               </div>
-              <div>
-                <div className="text-xs text-muted">CPU</div>
-                <div className="text-sm">
-                  {sysInfo.system.cpuCount} cores — {sysInfo.system.cpuModel}
-                </div>
+              <div className="vms-kv-row">
+                <span className="text-xs text-muted">Vi xử lý (CPU)</span>
+                <span className="text-xs text-mono">
+                  {sysInfo.system.cpuCount} Cores — {sysInfo.system.cpuModel}
+                </span>
               </div>
-              <div>
-                <div className="text-xs text-muted">RAM</div>
-                <div className="text-sm">
-                  {formatBytes(sysInfo.system.usedMemory)} /{' '}
-                  {formatBytes(sysInfo.system.totalMemory)} ({sysInfo.system.memoryPercent}%)
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted">Uptime Server</div>
-                <div className="text-sm">
+              <div className="vms-kv-row">
+                <span className="text-xs text-muted">Thời gian hoạt động OS (Uptime)</span>
+                <span className="text-xs text-mono">
                   {Math.floor(sysInfo.system.uptime / 3600)}h{' '}
                   {Math.floor((sysInfo.system.uptime % 3600) / 60)}m
-                </div>
+                </span>
               </div>
-              <div>
-                <div className="text-xs text-muted">Uptime App</div>
-                <div className="text-sm">
+              <div className="vms-kv-row">
+                <span className="text-xs text-muted">Thời gian hoạt động dịch vụ VMS</span>
+                <span className="text-xs text-mono">
                   {Math.floor(sysInfo.app.uptime / 3600)}h{' '}
                   {Math.floor((sysInfo.app.uptime % 3600) / 60)}m
-                </div>
+                </span>
               </div>
             </div>
           </div>
@@ -612,12 +770,13 @@ export default function SettingsPage() {
       {hasSaveButton && (
         <div style={{ marginTop: 16, textAlign: 'right' }}>
           <button
+            type="button"
             className="btn btn-primary"
             onClick={handleSave}
             disabled={saving}
             id="save-settings"
           >
-            <Save size={16} /> {saving ? 'Đang lưu...' : 'Lưu cài đặt'}
+            <Save size={15} /> {saving ? 'Đang áp dụng...' : 'Lưu & Áp dụng ngay'}
           </button>
         </div>
       )}
