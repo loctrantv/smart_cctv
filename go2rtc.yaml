@@ -3,11 +3,11 @@
 # Port 1984 and 8554 are bound strictly to 127.0.0.1 via docker-compose.yml.
 
 api:
-  listen: ":1984"
+  listen: "127.0.0.1:1984"
   origin: ""
 
 rtsp:
-  listen: ":8554"
+  listen: "127.0.0.1:8554"
 
 webrtc:
   listen: ":8555"

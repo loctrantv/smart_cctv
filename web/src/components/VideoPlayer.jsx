@@ -98,6 +98,7 @@ export default function VideoPlayer({
   const handleLoadedMetadata = (e) => {
     const video = e.target;
     if (video.videoWidth && video.videoHeight) {
+      setConnected(true);
       const ratio = video.videoWidth / video.videoHeight;
       // Dual-lens cameras stack two 16:9 frames vertically -> ratio ~ 0.888 (8:9) or < 1.15
       const isDual = ratio < 1.15;
@@ -117,7 +118,22 @@ export default function VideoPlayer({
     if (!streams || !streamId) return;
 
     let cancelled = false;
+    let firstFrameReceived = false;
+    let fallbackTimer = null;
     setConnected(false);
+
+    const switchToHlsFallback = (reason) => {
+      if (cancelled || firstFrameReceived) return;
+      console.warn(`[VideoPlayer] Switching ${streamId} to HLS fallback (${reason})`);
+      if (pcRef.current) {
+        try {
+          pcRef.current.close();
+        } catch {}
+        pcRef.current = null;
+      }
+      setConnected(false);
+      setMode('hls');
+    };
 
     async function connectWebRTC() {
       try {
@@ -130,29 +146,44 @@ export default function VideoPlayer({
         pc.addTransceiver('audio', { direction: 'recvonly' });
 
         pc.ontrack = (event) => {
-          if (event.streams && event.streams[0]) {
-            mediaStreamRef.current = event.streams[0];
-            if (videoRef.current) {
-              videoRef.current.srcObject = event.streams[0];
+          const stream =
+            (event.streams && event.streams[0]) ||
+            (event.track ? new MediaStream([event.track]) : null);
+          if (stream) {
+            mediaStreamRef.current = stream;
+            if (videoRef.current && videoRef.current.srcObject !== stream) {
+              videoRef.current.srcObject = stream;
+              videoRef.current.play().catch(() => {});
             }
-            if (secondaryVideoRef.current) {
-              secondaryVideoRef.current.srcObject = event.streams[0];
+            if (secondaryVideoRef.current && secondaryVideoRef.current.srcObject !== stream) {
+              secondaryVideoRef.current.srcObject = stream;
+              secondaryVideoRef.current.play().catch(() => {});
             }
-            if (!cancelled) setConnected(true);
           }
         };
 
         pc.oniceconnectionstatechange = () => {
-          if (
-            pc.iceConnectionState === 'failed' ||
-            pc.iceConnectionState === 'disconnected'
-          ) {
-            if (!cancelled) {
-              setMode('hls');
-              setConnected(false);
-            }
+          const state = pc.iceConnectionState;
+          if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+            switchToHlsFallback(`ICE ${state}`);
           }
         };
+
+        pc.onconnectionstatechange = () => {
+          const state = pc.connectionState;
+          if (state === 'failed' || state === 'disconnected') {
+            switchToHlsFallback(`PeerConnection ${state}`);
+          }
+        };
+
+        // Watchdog: If WebRTC SDP handshake succeeds (200 OK) but UDP/TCP 8555 media or H.265 codec
+        // fails to decode any video frame within 6 seconds, automatically switch to HLS!
+        fallbackTimer = setTimeout(() => {
+          const v = videoRef.current;
+          if (!v || !v.videoWidth || v.readyState < 2) {
+            switchToHlsFallback('No decoded video frame within 6s (Codec H.265 or Port 8555 blocked)');
+          }
+        }, 6000);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -168,7 +199,7 @@ export default function VideoPlayer({
               }
             };
             pc.addEventListener('icegatheringstatechange', check);
-            setTimeout(resolve, 3000);
+            setTimeout(resolve, 2500);
           }
         });
 
@@ -197,14 +228,20 @@ export default function VideoPlayer({
           })
         );
       } catch (err) {
-        console.warn('[VideoPlayer] WebRTC failed, falling back to HLS:', err.message);
-        if (!cancelled) setMode('hls');
+        switchToHlsFallback(err.message);
       }
     }
 
     async function connectHLS() {
       try {
         mediaStreamRef.current = null;
+        if (videoRef.current && videoRef.current.srcObject) {
+          videoRef.current.srcObject = null;
+        }
+        if (secondaryVideoRef.current && secondaryVideoRef.current.srcObject) {
+          secondaryVideoRef.current.srcObject = null;
+        }
+
         const Hls = (await import('hls.js')).default;
         const hlsUrl = resolveStreamUrl(streams.hls);
 
@@ -212,7 +249,6 @@ export default function VideoPlayer({
           if (videoRef.current?.canPlayType('application/vnd.apple.mpegurl')) {
             videoRef.current.src = hlsUrl;
             if (autoPlay) videoRef.current.play().catch(() => {});
-            setConnected(true);
             return;
           }
           throw new Error('HLS not supported');
@@ -237,12 +273,11 @@ export default function VideoPlayer({
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (autoPlay && videoRef.current) videoRef.current.play().catch(() => {});
-          if (!cancelled) setConnected(true);
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
-            console.error('[VideoPlayer] HLS fatal error');
+            console.error('[VideoPlayer] HLS fatal error:', data.details);
             if (!cancelled) setMode('error');
           }
         });
@@ -254,18 +289,19 @@ export default function VideoPlayer({
       }
     }
 
+    let hlsCleanup = null;
     if (mode === 'webrtc') {
       connectWebRTC();
     } else if (mode === 'hls') {
-      const cleanup = connectHLS();
-      return () => {
-        cancelled = true;
-        if (typeof cleanup === 'function') cleanup();
-      };
+      connectHLS().then((cleanup) => {
+        hlsCleanup = cleanup;
+      });
     }
 
     return () => {
       cancelled = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (typeof hlsCleanup === 'function') hlsCleanup();
       mediaStreamRef.current = null;
       if (pcRef.current) {
         pcRef.current.close();
@@ -421,10 +457,21 @@ export default function VideoPlayer({
       onMouseUp={handlePanMouseUp}
       onMouseLeave={handlePanMouseUp}
     >
-      {/* Top-Right Technical OSD Badge (Protocol + Resolution) */}
+      {/* Top-Right Technical OSD Badge (Clickable Protocol Toggle + Resolution) */}
       {showOsd && connected && (
-        <div className="vms-osd-tech">
-          <span className={`vms-proto-tag ${mode}`}>{mode.toUpperCase()}</span>
+        <div className="vms-osd-tech" style={{ pointerEvents: 'auto' }}>
+          <button
+            type="button"
+            className={`vms-proto-tag ${mode}`}
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMode((prev) => (prev === 'webrtc' ? 'hls' : 'webrtc'));
+            }}
+            title="Nhấn để chuyển đổi giữa WebRTC và HLS"
+          >
+            {mode.toUpperCase()} ⇄
+          </button>
           {videoMeta.width > 0 && (
             <span className="vms-res-tag">
               {videoMeta.width}×{videoMeta.height}

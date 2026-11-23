@@ -8,11 +8,7 @@ services:
     image: alexxit/go2rtc:latest
     container_name: smart_cctv_stream
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:1984:1984"   # Web UI + API (Localhost only - proxied via Node.js)
-      - "127.0.0.1:8554:8554"   # RTSP Relay (Localhost only - used by local FFmpeg)
-      - "8555:8555/tcp"         # WebRTC media (TCP)
-      - "8555:8555/udp"         # WebRTC media (UDP)
+    network_mode: host
     volumes:
       - ./go2rtc.yaml:/config/go2rtc.yaml
     environment:
