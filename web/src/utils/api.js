@@ -45,14 +45,12 @@ export const verifyToken = () => api.get('/auth/verify').then((r) => r.data);
 export const changePassword = (data) => api.put('/auth/password', data).then((r) => r.data);
 
 // Helper to construct authenticated URLs for videos and images.
-// Relies on HttpOnly cookie in same-origin/proxy mode; appends token only if cross-origin host is configured.
+// Always includes ?token= fallback so <img> and <video> tags authenticate even if session logged in before HttpOnly cookie upgrade.
 export const getMediaUrl = (mediaPath) => {
   const cleanPath = String(mediaPath || '').replace(/^\/+/, '');
-  if (API_HOST) {
-    const token = localStorage.getItem('smart_cctv_token');
-    return `${API_HOST}/media/${cleanPath}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-  }
-  return `/media/${cleanPath}`;
+  const token = localStorage.getItem('smart_cctv_token');
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_HOST}/media/${cleanPath}${query}`;
 };
 
 export const resolveStreamUrl = (streamUrl) => {
@@ -80,11 +78,9 @@ export const getRecordingDates = (cameraId) =>
   api.get(`/recordings/dates/${cameraId}`).then((r) => r.data);
 export const deleteRecording = (id) => api.delete(`/recordings/${id}`).then((r) => r.data);
 export const getRecordingStreamUrl = (id) => {
-  if (API_HOST) {
-    const token = localStorage.getItem('smart_cctv_token');
-    return `${API_BASE}/recordings/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-  }
-  return `${API_BASE}/recordings/${id}/stream`;
+  const token = localStorage.getItem('smart_cctv_token');
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/recordings/${id}/stream${query}`;
 };
 
 // Events

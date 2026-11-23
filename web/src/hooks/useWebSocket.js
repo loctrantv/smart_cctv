@@ -14,11 +14,7 @@ export function useWebSocket(token) {
 
     const defaultWsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
     const wsBase = (import.meta.env.VITE_WS_URL || defaultWsUrl).replace(/\/+$/, '');
-    // When connecting same-origin, HttpOnly cookie is automatically sent on WS handshake;
-    // still pass token as fallback if cross-origin VITE_WS_URL is configured.
-    const wsUrl = import.meta.env.VITE_WS_URL
-      ? `${wsBase}/ws?token=${encodeURIComponent(token)}`
-      : `${wsBase}/ws`;
+    const wsUrl = `${wsBase}/ws?token=${encodeURIComponent(token)}`;
 
     let unmounted = false;
     let reconnectTimer = null;

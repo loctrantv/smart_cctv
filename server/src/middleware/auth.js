@@ -1,7 +1,7 @@
-const { verifyToken, parseCookies } = require('../utils/auth');
+const { verifyToken, parseCookies, generateToken } = require('../utils/auth');
 
 /**
- * Extract token from HttpOnly Cookie, Authorization Bearer header, or short-lived query token
+ * Extract token from HttpOnly Cookie, Authorization Bearer header, or query token
  */
 function extractRequestToken(req) {
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -42,6 +42,22 @@ module.exports = function authMiddleware(req, res, next) {
         return res.status(401).json({ error: 'Phiên đăng nhập đã hết hiệu lực. Vui lòng đăng nhập lại.' });
       }
       req.user = { id: user.id, username: user.username, token_version: user.token_version };
+
+      // Auto-heal missing HttpOnly session cookie if client authenticated via Bearer header
+      const cookies = parseCookies(req.headers.cookie);
+      if (!cookies.smart_cctv_session && !res.headersSent) {
+        const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+        const freshToken = generateToken(user.username, user.token_version);
+        const parts = [
+          `smart_cctv_session=${encodeURIComponent(freshToken)}`,
+          'Path=/',
+          'HttpOnly',
+          'SameSite=Lax',
+          `Max-Age=${24 * 60 * 60}`,
+        ];
+        if (isSecure) parts.push('Secure');
+        res.setHeader('Set-Cookie', parts.join('; '));
+      }
     } else {
       req.user = decoded;
     }
