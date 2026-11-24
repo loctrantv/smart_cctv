@@ -4676,6 +4676,35 @@ a {
     --header-height: 48px;
   }
 
+  /* Fix sidebar taking left flex space on mobile (overrides later position: relative rule) */
+  .sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 250px !important;
+    transform: translateX(-100%);
+    z-index: 220;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    z-index: 215;
+  }
+
+  .sidebar-collapse-btn {
+    display: none;
+  }
+
+  .main-content {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
   /* 1. Compact Mobile Topbar */
   .vms-topbar {
     padding: 0 10px;
