@@ -65,7 +65,7 @@ export default function FaceLibrary() {
 
           <div className="vms-divider" />
 
-          <div className="tech-input-shell" style={{ minWidth: 230, height: 32 }}>
+          <div className="tech-input-shell vms-face-search-input">
             <span className="tech-input-icon-left">
               <Search size={13} />
             </span>

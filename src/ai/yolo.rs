@@ -209,9 +209,8 @@ impl YoloDetector {
         ];
 
         let shape = view_arr.shape();
-        if !self.logged_shape.swap(true, Ordering::Relaxed) {
-            tracing::info!("[AI YOLO] First inference succeeded; output shape = {:?}", shape);
-        }
+        let should_log_first = !self.logged_shape.swap(true, Ordering::Relaxed);
+        let mut max_person_score = 0.0f32;
         let mut candidates = Vec::new();
 
         // Support BOTH standard YOLOv8 [1, 84, 8400] AND transposed [1, 8400, 84] OR end2end [1, 300, 6]
@@ -225,6 +224,9 @@ impl YoloDetector {
                 for &(cid, cat, lbl) in target_classes {
                     if 4 + cid < shape[1] {
                         let score = view_arr[[0, 4 + cid, a]];
+                        if cid == 0 && score.is_finite() && score > max_person_score {
+                            max_person_score = score;
+                        }
                         if score.is_finite() && score > best_conf {
                             best_conf = score;
                             best_target = Some((cid, cat, lbl));
@@ -358,6 +360,15 @@ impl YoloDetector {
                     });
                 }
             }
+        }
+
+        if should_log_first {
+            tracing::info!(
+                "[AI YOLO] First inference succeeded; output shape = {:?}, max_person_score = {:.3}, kept_boxes = {}",
+                shape,
+                max_person_score,
+                candidates.len()
+            );
         }
 
         non_max_suppression(candidates, 0.45)

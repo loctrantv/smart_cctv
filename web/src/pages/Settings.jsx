@@ -259,13 +259,7 @@ export default function SettingsPage() {
                       <div className="card-body" style={{ padding: '12px 16px' }}>
                         {isEditing ? (
                           <div className="flex flex-col gap-2">
-                            <div
-                              style={{
-                                display: 'grid',
-                                gridTemplateColumns: '1fr 1fr',
-                                gap: 12,
-                              }}
-                            >
+                            <div className="vms-grid-2">
                               <TechInput
                                 label="Tên kênh camera"
                                 icon={Camera}
@@ -312,7 +306,7 @@ export default function SettingsPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between gap-4">
+                          <div className="vms-cam-row-item">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="vms-ch-tag text-mono">
@@ -396,7 +390,7 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+            <div className="vms-grid-3">
               <TechNumberInput
                 label="Hạn mức lưu trữ tối đa"
                 value={settings['storage.max_gb'] || '100'}
@@ -457,12 +451,7 @@ export default function SettingsPage() {
                 {aiModels.map((m) => (
                   <div
                     key={m.id}
-                    className="flex items-center justify-between gap-3 p-3"
-                    style={{
-                      background: 'var(--bg-secondary)',
-                      borderRadius: 6,
-                      border: '1px solid var(--border)',
-                    }}
+                    className="vms-model-card-row"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -504,7 +493,7 @@ export default function SettingsPage() {
               </span>
             </div>
             <div className="card-body" style={{ padding: 16 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="vms-grid-2">
                 <TechNumberInput
                   label="Chu kỳ quét khung hình"
                   hint="Giá trị nhỏ = phát hiện nhanh hơn (Khuyến nghị: 2000 – 3000 ms)"
@@ -633,7 +622,7 @@ export default function SettingsPage() {
               />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+            <div className="vms-grid-3">
               <TechNumberInput
                 label="Giờ bắt đầu trực đêm"
                 value={settings['sound.night_start'] ?? '22'}

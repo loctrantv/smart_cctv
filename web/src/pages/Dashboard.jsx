@@ -234,8 +234,8 @@ export default function Dashboard() {
 
           <div className="vms-divider" />
 
-          {/* Matrix Layout Switcher */}
-          <div className="vms-btn-group" title="Chọn bố cục màn hình Video Wall">
+          {/* Matrix Layout Switcher (Desktop/Tablet) */}
+          <div className="vms-btn-group desktop-only-group" title="Chọn bố cục màn hình Video Wall">
             {MATRIX_LAYOUTS.map((l) => (
               <button
                 key={l.id}
@@ -472,22 +472,38 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Collapsible Right Live Event Alert Drawer */}
+        {/* Collapsible Right Live Event Alert Drawer (Bottom Sheet on Mobile) */}
         {showEventDrawer && (
-          <aside className="vms-event-drawer">
-            <div className="vms-drawer-header">
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={15} style={{ color: 'var(--warning)' }} />
-                <span className="font-bold text-sm">Sự Kiện Trực Tiếp</span>
+          <>
+            <div
+              className="mobile-drawer-backdrop"
+              onClick={() => setShowEventDrawer(false)}
+            />
+            <aside className="vms-event-drawer">
+              <div className="vms-drawer-header">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={15} style={{ color: 'var(--warning)' }} />
+                  <span className="font-bold text-sm">Sự Kiện Trực Tiếp</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="vms-strip-btn"
+                    onClick={() => navigate('/events')}
+                  >
+                    Xem tất cả
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-icon mobile-only-close"
+                    style={{ width: 26, height: 26 }}
+                    onClick={() => setShowEventDrawer(false)}
+                    aria-label="Đóng khay cảnh báo"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                className="vms-strip-btn"
-                onClick={() => navigate('/events')}
-              >
-                Xem tất cả
-              </button>
-            </div>
 
             <div className="vms-drawer-list custom-scrollbar">
               {recentEvents.length === 0 ? (
@@ -539,6 +555,7 @@ export default function Dashboard() {
               )}
             </div>
           </aside>
+          </>
         )}
       </div>
 

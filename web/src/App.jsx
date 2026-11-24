@@ -187,11 +187,11 @@ function AppInner() {
   }
 
   const navItems = [
-    { path: '/', icon: LayoutGrid, label: 'Live Matrix' },
-    { path: '/playback', icon: PlayCircle, label: 'Xem lại NVR' },
-    { path: '/events', icon: AlertTriangle, label: 'Sự kiện AI' },
-    { path: '/faces', icon: Users, label: 'Khuôn mặt' },
-    { path: '/settings', icon: Settings, label: 'Cài đặt' },
+    { path: '/', icon: LayoutGrid, label: 'Live Matrix', shortLabel: 'Live' },
+    { path: '/playback', icon: PlayCircle, label: 'Xem lại NVR', shortLabel: 'Xem lại' },
+    { path: '/events', icon: AlertTriangle, label: 'Sự kiện AI', shortLabel: 'Sự kiện' },
+    { path: '/faces', icon: Users, label: 'Khuôn mặt', shortLabel: 'Khuôn mặt' },
+    { path: '/settings', icon: Settings, label: 'Cài đặt', shortLabel: 'Cài đặt' },
   ];
 
   const pageTitle =
@@ -334,6 +334,14 @@ function AppInner() {
               </div>
 
               <div className="header-right">
+                <div
+                  className={`mobile-ws-pill ${ws.connected ? 'online' : 'offline'}`}
+                  title={ws.connected ? 'WebSocket Online' : 'Mất kết nối WebSocket'}
+                >
+                  <span className={`status-dot ${ws.connected ? '' : 'offline'}`} />
+                  <span className="text-mono">{ws.connected ? 'LIVE' : 'OFF'}</span>
+                </div>
+
                 <div className="vms-digital-clock text-mono">
                   <span className="clock-time">
                     {clock.toLocaleTimeString('vi-VN', { hour12: false })}
@@ -344,7 +352,7 @@ function AppInner() {
                 <button
                   type="button"
                   onClick={toggleTvMode}
-                  className="header-btn"
+                  className="header-btn desktop-only-btn"
                   title="Chế độ TV Wall (Toàn màn hình không viền)"
                 >
                   <Maximize size={16} />
@@ -389,6 +397,29 @@ function AppInner() {
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           </div>
+
+          {!tvMode && (
+            <nav className="mobile-bottom-nav" aria-label="Điều hướng di động">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  end={item.path === '/'}
+                  className={({ isActive }) => `mobile-bottom-item ${isActive ? 'active' : ''}`}
+                >
+                  <div className="mobile-bottom-icon-wrap">
+                    <item.icon size={19} />
+                    {item.path === '/events' && globalStats.eventsToday > 0 && (
+                      <span className="mobile-bottom-badge">
+                        {globalStats.eventsToday > 99 ? '99+' : globalStats.eventsToday}
+                      </span>
+                    )}
+                  </div>
+                  <span>{item.shortLabel}</span>
+                </NavLink>
+              ))}
+            </nav>
+          )}
         </div>
       </div>
     </AppContext.Provider>

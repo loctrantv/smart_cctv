@@ -4606,3 +4606,552 @@ a {
 .tech-dropzone-preview:hover .tech-dropzone-overlay {
   opacity: 1;
 }
+
+
+/* ============================================================
+   MOBILE-FIRST NATIVE VMS EXPERIENCE UPGRADE
+   ============================================================ */
+
+html,
+body,
+#root,
+.app-layout {
+  height: 100vh;
+  height: 100dvh;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Responsive Utility Grids (Settings / Forms) */
+.vms-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vms-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vms-cam-row-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.vms-model-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.vms-face-search-input {
+  min-width: 220px;
+  height: 32px;
+}
+
+/* Desktop defaults for mobile-only elements */
+.mobile-bottom-nav,
+.mobile-ws-pill,
+.mobile-drawer-backdrop,
+.mobile-only-close {
+  display: none;
+}
+
+/* ---------- Mobile & Small Tablet (<= 768px) ---------- */
+@media (max-width: 768px) {
+  :root {
+    --header-height: 48px;
+  }
+
+  /* 1. Compact Mobile Topbar */
+  .vms-topbar {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .header-left {
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .header-title {
+    font-size: 0.98rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vms-digital-clock,
+  .desktop-only-btn,
+  .desktop-only-group,
+  .vms-divider {
+    display: none !important;
+  }
+
+  .mobile-ws-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: rgba(0, 255, 136, 0.1);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    color: var(--success);
+  }
+
+  .mobile-ws-pill.offline {
+    background: rgba(255, 59, 48, 0.12);
+    border-color: rgba(255, 59, 48, 0.35);
+    color: var(--danger);
+  }
+
+  /* 2. Native-Style Frosted Bottom Tab Bar */
+  .mobile-bottom-nav {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-around;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 180;
+    background: rgba(11, 12, 20, 0.94);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1px solid var(--border);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  :root[data-theme='light'] .mobile-bottom-nav {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.08);
+  }
+
+  .mobile-bottom-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 2px;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: color 140ms ease, background 140ms ease;
+    min-width: 0;
+  }
+
+  .mobile-bottom-item.active {
+    color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .mobile-bottom-icon-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mobile-bottom-badge {
+    position: absolute;
+    top: -5px;
+    right: -10px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.58rem;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  /* Ensure scrollable content clears fixed bottom nav */
+  .page-content {
+    padding: 10px 10px calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .page-content.vms-edge-page {
+    padding: 6px 6px calc(68px + env(safe-area-inset-bottom, 0px)) !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 3. Horizontal Scrollable Control Strip on Mobile */
+  .vms-control-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .vms-control-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .vms-strip-left,
+  .vms-strip-right {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
+
+  .vms-strip-btn {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 0.74rem;
+  }
+
+  /* 4. Live Matrix & Dual-Lens Video Cards on Mobile */
+  .vms-matrix-workspace {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .vms-wall-body {
+    overflow: visible;
+  }
+
+  .vms-matrix-grid {
+    height: auto;
+    gap: 10px;
+    padding: 4px;
+    background: transparent;
+    border: none;
+  }
+
+  .vms-matrix-grid.layout-1-split,
+  .vms-matrix-grid.layout-2-col,
+  .vms-matrix-grid.layout-3-col,
+  .vms-matrix-grid.layout-4-col,
+  .vms-matrix-grid.layout-2x2,
+  .vms-matrix-grid.layout-3x3 {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .vms-matrix-cell {
+    border-radius: 10px;
+    min-height: 260px;
+    box-shadow: var(--shadow-md);
+  }
+
+  .vms-matrix-cell .vms-player-root.lens-mode-stacked {
+    aspect-ratio: 8 / 9;
+  }
+
+  .vms-matrix-cell .vms-player-root.lens-mode-top,
+  .vms-matrix-cell .vms-player-root.lens-mode-bottom {
+    aspect-ratio: 16 / 9;
+  }
+
+  .vms-matrix-cell .vms-player-root.lens-mode-split {
+    height: auto;
+  }
+
+  .vms-dual-split-grid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    height: auto;
+  }
+
+  .vms-split-pane {
+    aspect-ratio: 16 / 9;
+    height: auto;
+  }
+
+  /* Larger Touch Targets for Camera Cell Actions & Player HUD */
+  .vms-cell-osd-top {
+    max-width: calc(100% - 118px);
+    padding: 4px 8px;
+  }
+
+  .vms-cell-actions {
+    opacity: 1;
+    gap: 5px;
+  }
+
+  .vms-cell-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+  }
+
+  /* Prevent Overlap between Bottom-Left HUD and Bottom-Right WebRTC/Res Badge */
+  .vms-osd-tech {
+    top: 44px;
+    bottom: auto;
+    right: 6px;
+  }
+
+  .vms-res-tag {
+    display: none;
+  }
+
+  .vms-player-hud-bar {
+    opacity: 1;
+    transform: none;
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+    justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .vms-player-hud-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .vms-hud-btn {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 0.7rem;
+  }
+
+  .vms-hud-icon-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .vms-lens-tag {
+    bottom: 40px;
+    font-size: 0.6rem;
+  }
+
+  /* 5. Mobile Bottom Sheet for Live Event Drawer */
+  .mobile-drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(3px);
+    z-index: 210;
+  }
+
+  .mobile-only-close {
+    display: inline-flex;
+  }
+
+  .vms-event-drawer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    max-height: 74dvh;
+    z-index: 220;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.75);
+    animation: slideUp 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 6. CameraView Workstation on Mobile */
+  .vms-workstation {
+    height: auto;
+  }
+
+  .vms-workstation-body {
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .vms-workstation-stage {
+    min-height: 240px;
+    padding: 4px;
+    border-radius: 10px;
+  }
+
+  .vms-stage-frame.zone-drawing-locked,
+  .vms-stage-frame.mode-stacked {
+    width: 100%;
+    height: auto;
+  }
+
+  .vms-workstation-sidebar {
+    width: 100%;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  /* 7. Playback NVR Mobile Controls */
+  .nvr-pro-control-bar {
+    padding: 8px 10px 10px;
+  }
+
+  .nvr-clip-scrubber {
+    height: 28px;
+  }
+
+  .nvr-scrubber-rail {
+    height: 6px;
+  }
+
+  .nvr-ctrl-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .nvr-volume-slider {
+    display: none;
+  }
+
+  .nvr-timecode-readout {
+    margin-left: 0;
+    font-size: 0.7rem;
+    padding: 3px 6px;
+  }
+
+  .nvr-timecode-readout .tc-wall {
+    display: none;
+  }
+
+  .nvr-pill-btn {
+    height: 32px;
+    padding: 0 9px;
+  }
+
+  /* 8. Settings Page Mobile Layout */
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 4px;
+    gap: 4px;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+  }
+
+  .vms-grid-2,
+  .vms-grid-3 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .vms-cam-row-item,
+  .vms-model-card-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .vms-model-card-row .tech-btn {
+    width: 100%;
+    height: 36px;
+  }
+
+  .tech-switch-card {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .tech-input-control,
+  .tech-number-stepper {
+    height: 40px;
+  }
+
+  .tech-stepper-btn {
+    width: 38px;
+  }
+
+  /* 9. Events & Face Library Mobile Grid */
+  .vms-event-summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .vms-event-stat-chip {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .vms-events-gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .vms-face-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .vms-face-search-input {
+    min-width: 0;
+    width: 100%;
+    flex: 1;
+  }
+
+  /* 10. Modals, Calendar Popover & Toasts on Mobile */
+  .tech-toast-stack {
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-width: none;
+  }
+
+  .tech-modal-backdrop {
+    padding: 10px;
+    align-items: flex-end;
+  }
+
+  .tech-confirm-modal {
+    max-height: 88dvh;
+    overflow-y: auto;
+    border-radius: 12px;
+  }
+
+  .tech-calendar-popover {
+    left: auto;
+    right: 0;
+    max-width: calc(100vw - 24px);
+  }
+
+  .login-card {
+    margin: 16px;
+    padding: 24px 20px;
+  }
+}
+
+@media (max-width: 420px) {
+  .vms-events-gallery-grid {
+    grid-template-columns: 1fr;
+  }
+}

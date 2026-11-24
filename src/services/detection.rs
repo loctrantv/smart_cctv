@@ -82,55 +82,72 @@ impl DetectionEngine {
 
     /// Load all already-downloaded ONNX models in a background blocking thread so HTTP/WebRTC/HLS
     /// binds and serves live streams immediately on startup without blocking Tokio workers.
+    /// Each model acquires its own permit so YOLOv8n starts detecting immediately even while
+    /// ArcFace/ALPR are still compiling.
     pub fn load_installed_models_in_background(&self) {
         let engine = self.clone();
         tokio::spawn(async move {
-            let Ok(_permit) = engine.ai_semaphore.clone().acquire_owned().await else {
-                return;
-            };
-            let eng_blocking = engine.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                if let Some(p) = eng_blocking.model_mgr.model_path("yolov8n") {
-                    match eng_blocking.yolo.load_from_file(&p) {
+            // 1. Load YOLOv8n first (highest priority for Person/Vehicle/Animal detection)
+            if let Some(p) = engine.model_mgr.model_path("yolov8n") {
+                if let Ok(_permit) = engine.ai_semaphore.clone().acquire_owned().await {
+                    let eng = engine.clone();
+                    let _ = tokio::task::spawn_blocking(move || match eng.yolo.load_from_file(&p) {
                         Ok(()) => {
-                            eng_blocking.model_mgr.mark_loaded("yolov8n", true);
-                            eng_blocking.warned_yolo_missing.store(false, Ordering::Relaxed);
+                            eng.model_mgr.mark_loaded("yolov8n", true);
+                            eng.warned_yolo_missing.store(false, Ordering::Relaxed);
                         }
                         Err(e) => {
-                            eng_blocking.model_mgr.mark_loaded("yolov8n", false);
+                            eng.model_mgr.mark_loaded("yolov8n", false);
                             tracing::error!("[AI Boot] Failed loading yolov8n: {}", e);
                         }
-                    }
+                    })
+                    .await;
                 }
-                if let Some(p) = eng_blocking.model_mgr.model_path("arcface_mbf") {
-                    match eng_blocking.face_engine.load_rec_model(&p) {
-                        Ok(()) => {
-                            eng_blocking.model_mgr.mark_loaded("arcface_mbf", true);
-                            eng_blocking.reindex_known_faces();
+            }
+
+            // 2. Load SFace / ArcFace face embedding model
+            if let Some(p) = engine.model_mgr.model_path("arcface_mbf") {
+                if let Ok(_permit) = engine.ai_semaphore.clone().acquire_owned().await {
+                    let eng = engine.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        match eng.face_engine.load_rec_model(&p) {
+                            Ok(()) => {
+                                eng.model_mgr.mark_loaded("arcface_mbf", true);
+                                eng.reindex_known_faces();
+                            }
+                            Err(e) => {
+                                eng.model_mgr.mark_loaded("arcface_mbf", false);
+                                tracing::error!("[AI Boot] Failed loading arcface_mbf: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            eng_blocking.model_mgr.mark_loaded("arcface_mbf", false);
-                            tracing::error!("[AI Boot] Failed loading arcface_mbf: {}", e);
+                    })
+                    .await;
+                }
+            }
+
+            // 3. Load ALPR license plate detector
+            if let Some(p) = engine.model_mgr.model_path("alpr_plate") {
+                if let Ok(_permit) = engine.ai_semaphore.clone().acquire_owned().await {
+                    let eng = engine.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        match eng.alpr_engine.load_from_file(&p) {
+                            Ok(()) => eng.model_mgr.mark_loaded("alpr_plate", true),
+                            Err(e) => {
+                                eng.model_mgr.mark_loaded("alpr_plate", false);
+                                tracing::error!("[AI Boot] Failed loading alpr_plate: {}", e);
+                            }
                         }
-                    }
+                    })
+                    .await;
                 }
-                if let Some(p) = eng_blocking.model_mgr.model_path("alpr_plate") {
-                    match eng_blocking.alpr_engine.load_from_file(&p) {
-                        Ok(()) => eng_blocking.model_mgr.mark_loaded("alpr_plate", true),
-                        Err(e) => {
-                            eng_blocking.model_mgr.mark_loaded("alpr_plate", false);
-                            tracing::error!("[AI Boot] Failed loading alpr_plate: {}", e);
-                        }
-                    }
-                }
-                if eng_blocking.model_mgr.model_path("yunet_face").is_some() {
-                    eng_blocking.model_mgr.mark_loaded("yunet_face", true);
-                }
-                if eng_blocking.model_mgr.model_path("yamnet_audio").is_some() {
-                    eng_blocking.model_mgr.mark_loaded("yamnet_audio", true);
-                }
-            })
-            .await;
+            }
+
+            if engine.model_mgr.model_path("yunet_face").is_some() {
+                engine.model_mgr.mark_loaded("yunet_face", true);
+            }
+            if engine.model_mgr.model_path("yamnet_audio").is_some() {
+                engine.model_mgr.mark_loaded("yamnet_audio", true);
+            }
         });
     }
 
@@ -1092,14 +1109,16 @@ async fn capture_rtsp_jpeg_in_memory(rtsp_url: &str) -> Option<Vec<u8>> {
         "error",
         "-rtsp_transport",
         "tcp",
-        "-analyzeduration",
-        "1000000",
-        "-probesize",
-        "1000000",
         "-i",
         rtsp_url,
-        "-vframes",
+        "-frames:v",
         "1",
+        "-strict",
+        "-1",
+        "-pix_fmt",
+        "yuvj420p",
+        "-q:v",
+        "4",
         "-f",
         "image2pipe",
         "-vcodec",
@@ -1108,17 +1127,39 @@ async fn capture_rtsp_jpeg_in_memory(rtsp_url: &str) -> Option<Vec<u8>> {
     ])
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
-    .stderr(Stdio::null())
+    .stderr(Stdio::piped())
     .kill_on_drop(true);
 
-    let child = cmd.spawn().ok()?;
-    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(6), child.wait_with_output()).await
-    else {
-        return None;
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[AI DET] Failed to spawn ffmpeg for {}: {}", rtsp_url, e);
+            return None;
+        }
+    };
+    let out = match tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            tracing::warn!("[AI DET] ffmpeg wait error for {}: {}", rtsp_url, e);
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!("[AI DET] ffmpeg frame capture timed out (10s) for {}", rtsp_url);
+            return None;
+        }
     };
     if out.status.success() && out.stdout.len() > 1000 {
         Some(out.stdout)
     } else {
+        let err_msg = String::from_utf8_lossy(&out.stderr);
+        let trimmed = err_msg.trim();
+        if !trimmed.is_empty() {
+            tracing::warn!(
+                "[AI DET] ffmpeg frame capture failed for {}: {}",
+                rtsp_url,
+                trimmed
+            );
+        }
         None
     }
 }
