@@ -19,6 +19,7 @@ import {
   TechInput,
   TechNumberInput,
   TechSwitch,
+  TechFileDropzone,
   useTechDialog,
 } from '../components/TechUI';
 import {
@@ -297,7 +298,7 @@ export default function SettingsPage() {
   const usedQuotaPct = Math.min(100, Math.round((usedStorageBytes / maxQuotaBytes) * 100));
 
   return (
-    <div style={{ maxWidth: 880, margin: '0 auto' }}>
+    <div className="vms-settings-shell">
       <div className="tabs">
         {TABS.map((tab) => (
           <button
@@ -692,20 +693,17 @@ export default function SettingsPage() {
                 pipeline Rust AI và xem ảnh kết quả vẽ khung Bounding Box + log chi tiết từng khung hình.
               </p>
 
-              <label className="vms-test-upload-box mb-3">
-                <input
-                  type="file"
-                  accept="video/mp4,video/quicktime,video/x-matroska,video/webm,image/jpeg,image/png,image/webp"
-                  style={{ display: 'none' }}
-                  onChange={(e) => setTestFile(e.target.files?.[0] || null)}
-                />
-                <Upload size={18} style={{ color: 'var(--accent)' }} />
-                <span className="text-sm font-bold">
-                  {testFile
+              <TechFileDropzone
+                accept="video/mp4,video/quicktime,video/x-matroska,video/webm,image/jpeg,image/png,image/webp"
+                onFileSelect={(f) => setTestFile(f)}
+                selectedFileName={
+                  testFile
                     ? `${testFile.name} (${(testFile.size / (1024 * 1024)).toFixed(2)} MB)`
-                    : 'Nhấn để chọn Video test (.mp4) hoặc Ảnh test (.jpg/.png)'}
-                </span>
-              </label>
+                    : ''
+                }
+                emptyText="Nhấn hoặc kéo thả Video test (.mp4/.mov/.mkv) hoặc Ảnh test (.jpg/.png)"
+                hintText="Hỗ trợ: MP4, MOV, MKV, WebM, JPEG, PNG — Tối đa 50MB"
+              />
 
               <div className="vms-grid-3 mb-3">
                 <TechNumberInput

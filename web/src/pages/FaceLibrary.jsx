@@ -3,7 +3,7 @@ import { getFaces, addFace, updateFace, deleteFace, getMediaUrl } from '../utils
 import { Users, Plus, Trash2, Clock, Search, Edit3, ScanFace, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { ImageZoomModal, LazyEventImage } from './Events';
-import { TechInput, TechFileDropzone, useTechDialog } from '../components/TechUI';
+import { TechInput, TechFileDropzone, TechSearchInput, useTechDialog } from '../components/TechUI';
 
 export default function FaceLibrary() {
   const { confirmDialog, showToast } = useTechDialog();
@@ -65,19 +65,12 @@ export default function FaceLibrary() {
 
           <div className="vms-divider" />
 
-          <div className="tech-input-shell vms-face-search-input">
-            <span className="tech-input-icon-left">
-              <Search size={13} />
-            </span>
-            <input
-              type="text"
-              className="tech-input-control has-left-icon"
-              style={{ height: 32, fontSize: '0.78rem' }}
-              placeholder="Tìm theo tên nhân sự..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          <TechSearchInput
+            className="vms-face-search-input"
+            placeholder="Tìm theo tên nhân sự..."
+            value={search}
+            onChange={setSearch}
+          />
         </div>
 
         <div className="vms-strip-right">

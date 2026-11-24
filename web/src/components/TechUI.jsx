@@ -21,6 +21,7 @@ import {
   Plus,
   Upload,
   X,
+  Search,
 } from 'lucide-react';
 import {
   format,
@@ -590,7 +591,15 @@ export function TechCheckbox({ checked, onChange, label, className = '' }) {
 // 7. TECH FILE DROPZONE (Replacing native <input type="file">)
 // ============================================================
 
-export function TechFileDropzone({ label, accept = 'image/*', onFileSelect, previewUrl }) {
+export function TechFileDropzone({
+  label,
+  accept = 'image/*',
+  onFileSelect,
+  previewUrl,
+  emptyText = 'Nhấn để chọn file hoặc kéo thả vào đây',
+  hintText = 'Hỗ trợ: JPEG, PNG, WebP (Tối đa 5MB)',
+  selectedFileName = '',
+}) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [fileName, setFileName] = useState('');
@@ -601,11 +610,15 @@ export function TechFileDropzone({ label, accept = 'image/*', onFileSelect, prev
     onFileSelect(f);
   };
 
+  const displayFileName = selectedFileName || fileName;
+
   return (
     <div className="tech-field-group">
       {label && <label className="tech-field-label">{label}</label>}
       <div
-        className={`tech-dropzone ${dragging ? 'is-dragging' : ''}`}
+        className={`tech-dropzone ${dragging ? 'is-dragging' : ''} ${
+          displayFileName ? 'has-file' : ''
+        }`}
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
@@ -637,13 +650,127 @@ export function TechFileDropzone({ label, accept = 'image/*', onFileSelect, prev
           </div>
         ) : (
           <div className="tech-dropzone-empty">
-            <Upload size={22} style={{ color: 'var(--accent)' }} />
-            <span className="text-xs font-bold">
-              {fileName || 'Nhấn để chọn file hoặc kéo thả ảnh vào đây'}
-            </span>
-            <span className="text-xs text-muted text-mono">Hỗ trợ: JPEG, PNG, WebP (Tối đa 5MB)</span>
+            <div className="tech-dropzone-icon-ring">
+              <Upload size={20} />
+            </div>
+            <span className="tech-dropzone-title">{displayFileName || emptyText}</span>
+            <span className="tech-dropzone-hint text-mono">{hintText}</span>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// 8. TECH SEARCH INPUT (Custom Search Bar with instant clear)
+// ============================================================
+
+export function TechSearchInput({
+  value,
+  onChange,
+  placeholder = 'Tìm kiếm...',
+  className = '',
+  style = {},
+}) {
+  return (
+    <div className={`tech-search-shell ${className}`} style={style}>
+      <Search size={14} className="tech-search-icon" />
+      <input
+        type="text"
+        className="tech-search-control"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value && (
+        <button
+          type="button"
+          className="tech-search-clear"
+          onClick={() => onChange('')}
+          aria-label="Xóa tìm kiếm"
+        >
+          <X size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 9. TECH SLIDER (Custom Range Bar replacing <input type="range">)
+// ============================================================
+
+export function TechSlider({
+  value = 0,
+  min = 0,
+  max = 1,
+  step = 0.05,
+  onChange,
+  className = '',
+  ariaLabel = 'Điều chỉnh giá trị',
+}) {
+  const railRef = useRef(null);
+  const draggingRef = useRef(false);
+
+  const pct = Math.max(0, Math.min(100, ((value - min) / Math.max(0.0001, max - min)) * 100));
+
+  const updateFromClientX = useCallback(
+    (clientX) => {
+      if (!railRef.current) return;
+      const rect = railRef.current.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const raw = min + ratio * (max - min);
+      const stepped = Math.round(raw / step) * step;
+      const clamped = Math.max(min, Math.min(max, Number(stepped.toFixed(4))));
+      onChange(clamped);
+    },
+    [min, max, step, onChange]
+  );
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!draggingRef.current) return;
+      const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
+      if (clientX !== undefined) updateFromClientX(clientX);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+    };
+  }, [updateFromClientX]);
+
+  return (
+    <div
+      ref={railRef}
+      role="slider"
+      aria-label={ariaLabel}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      tabIndex={0}
+      className={`tech-slider-root ${className}`}
+      onMouseDown={(e) => {
+        draggingRef.current = true;
+        updateFromClientX(e.clientX);
+      }}
+      onTouchStart={(e) => {
+        draggingRef.current = true;
+        if (e.touches[0]) updateFromClientX(e.touches[0].clientX);
+      }}
+    >
+      <div className="tech-slider-track">
+        <div className="tech-slider-fill" style={{ width: `${pct}%` }} />
+        <div className="tech-slider-thumb" style={{ left: `${pct}%` }} />
       </div>
     </div>
   );

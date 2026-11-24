@@ -7,7 +7,7 @@ import {
   getMediaUrl,
 } from '../utils/api';
 import { format } from 'date-fns';
-import { TechSelect, TechDatePicker, useTechDialog } from '../components/TechUI';
+import { TechSelect, TechDatePicker, TechSlider, useTechDialog } from '../components/TechUI';
 import {
   ChevronLeft,
   ChevronRight,
@@ -476,8 +476,11 @@ export default function Playback() {
     if (videoRef.current) videoRef.current.muted = next;
   };
 
-  const handleVolumeChange = (e) => {
-    const val = parseFloat(e.target.value);
+  const handleVolumeChange = (valOrEvent) => {
+    const val =
+      typeof valOrEvent === 'number'
+        ? valOrEvent
+        : parseFloat(valOrEvent?.target?.value ?? '0');
     setVolume(val);
     setIsMuted(val === 0);
     if (videoRef.current) {
@@ -1097,14 +1100,14 @@ export default function Playback() {
                             <Volume2 size={14} />
                           )}
                         </button>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.05"
+                        <TechSlider
+                          min={0}
+                          max={1}
+                          step={0.05}
                           value={isMuted ? 0 : volume}
                           onChange={handleVolumeChange}
                           className="nvr-volume-slider"
+                          ariaLabel="Âm lượng phát lại"
                         />
                       </div>
 

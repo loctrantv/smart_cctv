@@ -6,6 +6,7 @@ import {
   TechSelect,
   TechDatePicker,
   TechCheckbox,
+  TechSearchInput,
   useTechDialog,
 } from '../components/TechUI';
 import {
@@ -338,19 +339,12 @@ export default function Events() {
             ]}
           />
 
-          <div className="tech-input-shell" style={{ minWidth: 185, height: 32 }}>
-            <span className="tech-input-icon-left">
-              <Search size={13} />
-            </span>
-            <input
-              type="text"
-              className="tech-input-control has-left-icon"
-              style={{ height: 32, fontSize: '0.78rem' }}
-              placeholder="Tìm biển số / tên / nhãn..."
-              value={filters.search}
-              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            />
-          </div>
+          <TechSearchInput
+            placeholder="Tìm biển số / tên / nhãn..."
+            value={filters.search}
+            onChange={(val) => setFilters({ ...filters, search: val })}
+            style={{ minWidth: 200 }}
+          />
 
           <TechDatePicker
             value={filters.date}
