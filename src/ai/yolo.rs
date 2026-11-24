@@ -119,10 +119,12 @@ impl YoloDetector {
             return Vec::new();
         }
 
-        let is_dual_lens = (width as f64 / height as f64) < 1.15;
+        let ratio = width as f64 / height as f64;
+        let is_vertical_dual = ratio < 1.15;
+        let is_horizontal_dual = ratio > 2.6;
         let mut all_detections = Vec::new();
 
-        if is_dual_lens {
+        if is_vertical_dual {
             let half_h = height / 2;
             // Lens 1: Top 16:9 (y: 0 .. half_h)
             let top_view = DynamicImage::ImageRgb8(img.view(0, 0, width, half_h).to_image());
@@ -142,6 +144,26 @@ impl YoloDetector {
                 d.h *= 0.5;
             }
             all_detections.extend(bot_dets);
+        } else if is_horizontal_dual {
+            let half_w = width / 2;
+            // Lens 1: Left 16:9 (x: 0 .. half_w)
+            let left_view = DynamicImage::ImageRgb8(img.view(0, 0, half_w, height).to_image());
+            let mut left_dets = self.infer_single_view(&left_view, conf_threshold, 1);
+            for d in &mut left_dets {
+                d.x *= 0.5;
+                d.w *= 0.5;
+            }
+            all_detections.extend(left_dets);
+
+            // Lens 2: Right 16:9 (x: half_w .. width)
+            let right_view =
+                DynamicImage::ImageRgb8(img.view(half_w, 0, width - half_w, height).to_image());
+            let mut right_dets = self.infer_single_view(&right_view, conf_threshold, 2);
+            for d in &mut right_dets {
+                d.x = 0.5 + d.x * 0.5;
+                d.w *= 0.5;
+            }
+            all_detections.extend(right_dets);
         } else {
             let full_view = DynamicImage::ImageRgb8(img.clone());
             all_detections.extend(self.infer_single_view(&full_view, conf_threshold, 0));
@@ -156,13 +178,29 @@ impl YoloDetector {
         conf_threshold: f32,
         lens_id: u8,
     ) -> Vec<DetectedObject> {
-        let resized = view.resize_exact(640, 640, FilterType::Triangle).to_rgb8();
+        // Ultralytics YOLOv8 Letterbox (640x640 with 114/255 gray padding) to preserve true 16:9
+        // aspect ratio so horizontal animals (dogs/cats) and vehicles are never squished vertically
+        // into person-like shapes!
+        let (src_w, src_h) = view.dimensions();
+        if src_w < 16 || src_h < 16 {
+            return Vec::new();
+        }
+        let scale = (640.0f32 / src_w as f32).min(640.0f32 / src_h as f32);
+        let new_w = ((src_w as f32 * scale).round() as u32).clamp(1, 640);
+        let new_h = ((src_h as f32 * scale).round() as u32).clamp(1, 640);
+        let pad_x = (640 - new_w) / 2;
+        let pad_y = (640 - new_h) / 2;
 
-        // Prepare NCHW tensor [1, 3, 640, 640] normalized to [0..1]
-        let mut input_data = vec![0.0f32; 3 * 640 * 640];
+        let resized = view.resize_exact(new_w, new_h, FilterType::Triangle).to_rgb8();
+
+        // Prepare NCHW tensor [1, 3, 640, 640] filled with standard YOLO gray padding (114/255)
+        let pad_val = 114.0f32 / 255.0;
+        let mut input_data = vec![pad_val; 3 * 640 * 640];
         let plane_size = 640 * 640;
         for (y, x, pixel) in resized.enumerate_pixels() {
-            let idx = (y as usize) * 640 + (x as usize);
+            let dst_x = (x + pad_x) as usize;
+            let dst_y = (y + pad_y) as usize;
+            let idx = dst_y * 640 + dst_x;
             input_data[idx] = (pixel[0] as f32) / 255.0;
             input_data[plane_size + idx] = (pixel[1] as f32) / 255.0;
             input_data[2 * plane_size + idx] = (pixel[2] as f32) / 255.0;
@@ -196,7 +234,8 @@ impl YoloDetector {
         };
 
         // Target COCO classes for CCTV Security:
-        // 0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck, 15: cat, 16: dog
+        // 0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck,
+        // 15: cat, 16: dog, 17: horse, 18: sheep, 19: cow
         let target_classes: &[(usize, &str, &str)] = &[
             (0, "person", "person"),
             (1, "vehicle", "bicycle"),
@@ -206,7 +245,26 @@ impl YoloDetector {
             (7, "vehicle", "truck"),
             (15, "animal", "cat"),
             (16, "animal", "dog"),
+            (17, "animal", "animal"),
+            (18, "animal", "animal"),
+            (19, "animal", "animal"),
         ];
+
+        let unpad_box = |mut x1: f32, mut y1: f32, mut x2: f32, mut y2: f32| -> (f64, f64, f64, f64) {
+            if x1 <= 1.5 && y1 <= 1.5 && x2 <= 1.5 && y2 <= 1.5 {
+                x1 *= 640.0;
+                y1 *= 640.0;
+                x2 *= 640.0;
+                y2 *= 640.0;
+            }
+            let nx1 = ((x1 - pad_x as f32) / new_w as f32).clamp(0.0, 0.98) as f64;
+            let ny1 = ((y1 - pad_y as f32) / new_h as f32).clamp(0.0, 0.98) as f64;
+            let nx2 = ((x2 - pad_x as f32) / new_w as f32).clamp(nx1 as f32 + 0.01, 1.0) as f64;
+            let ny2 = ((y2 - pad_y as f32) / new_h as f32).clamp(ny1 as f32 + 0.01, 1.0) as f64;
+            let nw = (nx2 - nx1).clamp(0.01, (1.0 - nx1).max(0.01));
+            let nh = (ny2 - ny1).clamp(0.01, (1.0 - ny1).max(0.01));
+            (nx1, ny1, nw, nh)
+        };
 
         let shape = view_arr.shape();
         let should_log_first = !self.logged_shape.swap(true, Ordering::Relaxed);
@@ -236,24 +294,16 @@ impl YoloDetector {
 
                 if best_conf >= conf_threshold {
                     if let Some((cid, cat, lbl)) = best_target {
-                        let mut cx = view_arr[[0, 0, a]];
-                        let mut cy = view_arr[[0, 1, a]];
-                        let mut bw = view_arr[[0, 2, a]];
-                        let mut bh = view_arr[[0, 3, a]];
+                        let cx = view_arr[[0, 0, a]];
+                        let cy = view_arr[[0, 1, a]];
+                        let bw = view_arr[[0, 2, a]];
+                        let bh = view_arr[[0, 3, a]];
                         if !cx.is_finite() || !cy.is_finite() || !bw.is_finite() || !bh.is_finite()
                         {
                             continue;
                         }
-                        if cx > 1.5 || cy > 1.5 || bw > 1.5 || bh > 1.5 {
-                            cx /= 640.0;
-                            cy /= 640.0;
-                            bw /= 640.0;
-                            bh /= 640.0;
-                        }
-                        let x = (cx - bw * 0.5).clamp(0.0, 0.98) as f64;
-                        let y = (cy - bh * 0.5).clamp(0.0, 0.98) as f64;
-                        let w = (bw as f64).clamp(0.01, (1.0 - x).max(0.01));
-                        let h = (bh as f64).clamp(0.01, (1.0 - y).max(0.01));
+                        let (x, y, w, h) =
+                            unpad_box(cx - bw * 0.5, cy - bh * 0.5, cx + bw * 0.5, cy + bh * 0.5);
 
                         candidates.push(DetectedObject {
                             class_id: cid,
@@ -288,24 +338,16 @@ impl YoloDetector {
 
                 if best_conf >= conf_threshold {
                     if let Some((cid, cat, lbl)) = best_target {
-                        let mut cx = view_arr[[0, a, 0]];
-                        let mut cy = view_arr[[0, a, 1]];
-                        let mut bw = view_arr[[0, a, 2]];
-                        let mut bh = view_arr[[0, a, 3]];
+                        let cx = view_arr[[0, a, 0]];
+                        let cy = view_arr[[0, a, 1]];
+                        let bw = view_arr[[0, a, 2]];
+                        let bh = view_arr[[0, a, 3]];
                         if !cx.is_finite() || !cy.is_finite() || !bw.is_finite() || !bh.is_finite()
                         {
                             continue;
                         }
-                        if cx > 1.5 || cy > 1.5 || bw > 1.5 || bh > 1.5 {
-                            cx /= 640.0;
-                            cy /= 640.0;
-                            bw /= 640.0;
-                            bh /= 640.0;
-                        }
-                        let x = (cx - bw * 0.5).clamp(0.0, 0.98) as f64;
-                        let y = (cy - bh * 0.5).clamp(0.0, 0.98) as f64;
-                        let w = (bw as f64).clamp(0.01, (1.0 - x).max(0.01));
-                        let h = (bh as f64).clamp(0.01, (1.0 - y).max(0.01));
+                        let (x, y, w, h) =
+                            unpad_box(cx - bw * 0.5, cy - bh * 0.5, cx + bw * 0.5, cy + bh * 0.5);
 
                         candidates.push(DetectedObject {
                             class_id: cid,
@@ -330,23 +372,14 @@ impl YoloDetector {
                 }
                 let cid = view_arr[[0, a, 5]] as usize;
                 if let Some(&(_, cat, lbl)) = target_classes.iter().find(|&&(c, _, _)| c == cid) {
-                    let mut x1 = view_arr[[0, a, 0]];
-                    let mut y1 = view_arr[[0, a, 1]];
-                    let mut x2 = view_arr[[0, a, 2]];
-                    let mut y2 = view_arr[[0, a, 3]];
+                    let x1 = view_arr[[0, a, 0]];
+                    let y1 = view_arr[[0, a, 1]];
+                    let x2 = view_arr[[0, a, 2]];
+                    let y2 = view_arr[[0, a, 3]];
                     if !x1.is_finite() || !y1.is_finite() || !x2.is_finite() || !y2.is_finite() {
                         continue;
                     }
-                    if x2 > 1.5 || y2 > 1.5 {
-                        x1 /= 640.0;
-                        y1 /= 640.0;
-                        x2 /= 640.0;
-                        y2 /= 640.0;
-                    }
-                    let x = x1.clamp(0.0, 0.98) as f64;
-                    let y = y1.clamp(0.0, 0.98) as f64;
-                    let w = ((x2 - x1) as f64).clamp(0.01, (1.0 - x).max(0.01));
-                    let h = ((y2 - y1) as f64).clamp(0.01, (1.0 - y).max(0.01));
+                    let (x, y, w, h) = unpad_box(x1, y1, x2, y2);
                     candidates.push(DetectedObject {
                         class_id: cid,
                         category: cat.to_string(),

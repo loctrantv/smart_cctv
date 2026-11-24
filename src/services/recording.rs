@@ -175,22 +175,39 @@ impl RecordingManager {
                 let rtsp_input = format!("{}/{}", mgr.go2rtc_rtsp_url, camera.stream_id);
                 let start_instant = Instant::now();
 
+                mgr.ws_hub.push_log(
+                    "INFO",
+                    "REC",
+                    format!("Bắt đầu ghi hình '{}' -> {}", camera.name, file_name),
+                );
+
+                // Use Fragmented MP4 (`+frag_keyframe+empty_moov+default_base_moof`) so the `moov`
+                // atom is written at the start and every keyframe commits a self-contained playable
+                // fragment — preventing unplayable MP4 files when stopping mid-recording or on SIGKILL!
                 let mut child_res = Command::new("ffmpeg")
                     .args([
                         "-hide_banner",
                         "-loglevel",
                         "error",
                         "-y",
+                        "-fflags",
+                        "+genpts+discardcorrupt",
                         "-rtsp_transport",
                         "tcp",
                         "-i",
                         &rtsp_input,
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "0:a:0?",
                         "-c:v",
                         "copy",
                         "-c:a",
                         "aac",
+                        "-ar",
+                        "16000",
                         "-movflags",
-                        "+faststart",
+                        "+frag_keyframe+empty_moov+default_base_moof",
                         "-t",
                         &seg_duration.to_string(),
                     ])
@@ -198,6 +215,7 @@ impl RecordingManager {
                     .stdin(Stdio::piped())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
+                    .kill_on_drop(true)
                     .spawn();
 
                 let mut stopped_by_user = false;
@@ -209,13 +227,24 @@ impl RecordingManager {
                             stopped_by_user = true;
                             if let Some(mut stdin) = child.stdin.take() {
                                 let _ = stdin.write_all(b"q\n").await;
+                                let _ = stdin.flush().await;
+                                drop(stdin);
                             }
-                            let _ = tokio::time::timeout(Duration::from_secs(4), child.wait()).await;
-                            let _ = child.kill().await;
+                            if tokio::time::timeout(Duration::from_secs(6), child.wait())
+                                .await
+                                .is_err()
+                            {
+                                let _ = child.kill().await;
+                                let _ = child.wait().await;
+                            }
                         }
                     }
                 } else {
-                    tracing::error!("[REC] Failed to spawn FFmpeg for {}", camera.name);
+                    mgr.ws_hub.push_log(
+                        "ERROR",
+                        "REC",
+                        format!("Không thể khởi chạy FFmpeg ghi hình cho '{}'", camera.name),
+                    );
                     stopped_by_user = true;
                 }
 

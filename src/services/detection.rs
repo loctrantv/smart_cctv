@@ -438,6 +438,22 @@ impl DetectionEngine {
                     continue;
                 };
                 let mut rgb_img = dyn_img.to_rgb8();
+                if frame_idx == 1 {
+                    let (w, h) = rgb_img.dimensions();
+                    let ratio = w as f64 / h.max(1) as f64;
+                    let layout = if ratio < 1.15 {
+                        "Dual-Lens dọc (2×16:9 trên/dưới)"
+                    } else if ratio > 2.6 {
+                        "Dual-Lens ngang (2×16:9 trái/phải)"
+                    } else {
+                        "Single-Lens"
+                    };
+                    engine.ws_hub.push_log(
+                        "INFO",
+                        "TEST",
+                        format!("Kích thước khung hình: {}x{} (ratio {:.2}) -> {}", w, h, ratio, layout),
+                    );
+                }
                 let raw_dets = engine.yolo.detect_dual_lens(&rgb_img, safe_conf);
                 let mut frame_boxes = Vec::new();
 
