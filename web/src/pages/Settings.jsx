@@ -520,9 +520,9 @@ export default function SettingsPage() {
 
                 <TechNumberInput
                   label="Ngưỡng độ tin cậy AI (Confidence)"
-                  hint="Phạm vi từ 0.10 đến 0.95 (Mặc định: 0.45)"
-                  value={settings['detection.confidence_threshold'] || '0.45'}
-                  min={0.1}
+                  hint="Phạm vi từ 0.15 đến 0.95 (Khuyến nghị: 0.30 – 0.45)"
+                  value={settings['detection.confidence_threshold'] || '0.35'}
+                  min={0.15}
                   max={0.95}
                   step={0.05}
                   onChange={(val) =>
@@ -531,7 +531,55 @@ export default function SettingsPage() {
                 />
               </div>
 
-              <div className="mt-3 mb-3">
+              <div className="flex flex-col gap-2 mt-3 mb-3">
+                <TechSwitch
+                  checked={settings['detection.person_enabled'] !== '0'}
+                  onChange={(on) =>
+                    setSettings({
+                      ...settings,
+                      'detection.person_enabled': on ? '1' : '0',
+                    })
+                  }
+                  label="AI Nhận diện Con người & Khuôn mặt (Person / ArcFace)"
+                  description="Tự động đóng khung Cyan cho Người và khớp khuôn mặt trong Thư viện Khuôn mặt trên cả 2 mắt camera."
+                />
+
+                <TechSwitch
+                  checked={settings['detection.animal_enabled'] !== '0'}
+                  onChange={(on) =>
+                    setSettings({
+                      ...settings,
+                      'detection.animal_enabled': on ? '1' : '0',
+                    })
+                  }
+                  label="AI Nhận diện Thú cưng & Động vật (Chó / Mèo)"
+                  description="Tự động đóng khung Xanh Neon khi phát hiện chó, mèo di chuyển trong vùng quan sát."
+                />
+
+                <TechSwitch
+                  checked={settings['detection.vehicle_enabled'] !== '0'}
+                  onChange={(on) =>
+                    setSettings({
+                      ...settings,
+                      'detection.vehicle_enabled': on ? '1' : '0',
+                    })
+                  }
+                  label="AI Nhận diện Phương tiện & Biển số xe (Xe máy / Ô tô / ALPR)"
+                  description="Tự động đóng khung Vàng Amber cho xe máy, ô tô, xe đạp và trích xuất biển số."
+                />
+
+                <TechSwitch
+                  checked={settings['detection.motion_enabled'] === '1'}
+                  onChange={(on) =>
+                    setSettings({
+                      ...settings,
+                      'detection.motion_enabled': on ? '1' : '0',
+                    })
+                  }
+                  label="Bật phát hiện Chuyển động Pixel dự phòng (Motion Detection)"
+                  description="Mặc định: TẮT (Khuyến nghị khi đã bật AI YOLOv8n để tránh báo động giả do cây rung/ánh sáng). Khi bật: Báo thêm chuyển động cụm hẹp nếu không có đối tượng AI."
+                />
+
                 <TechSwitch
                   checked={settings['recording.on_motion_enabled'] === '1'}
                   onChange={(on) =>

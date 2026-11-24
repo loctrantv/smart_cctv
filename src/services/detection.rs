@@ -56,13 +56,16 @@ impl DetectionEngine {
 
         // Auto-load any existing ONNX models from disk
         if let Some(p) = model_mgr.model_path("yolov8n") {
-            let _ = yolo.load_from_file(&p);
+            let ok = yolo.load_from_file(&p).is_ok();
+            model_mgr.mark_loaded("yolov8n", ok);
         }
         if let Some(p) = model_mgr.model_path("arcface_mbf") {
-            let _ = face_engine.load_rec_model(&p);
+            let ok = face_engine.load_rec_model(&p).is_ok();
+            model_mgr.mark_loaded("arcface_mbf", ok);
         }
         if let Some(p) = model_mgr.model_path("alpr_plate") {
-            let _ = alpr_engine.load_from_file(&p);
+            let ok = alpr_engine.load_from_file(&p).is_ok();
+            model_mgr.mark_loaded("alpr_plate", ok);
         }
 
         Self {
@@ -83,12 +86,14 @@ impl DetectionEngine {
     }
 
     pub fn hot_load_model(&self, model_id: &str, path: &std::path::Path) -> Result<(), String> {
-        match model_id {
+        let res = match model_id {
             "yolov8n" => self.yolo.load_from_file(path),
             "arcface_mbf" => self.face_engine.load_rec_model(path),
             "alpr_plate" => self.alpr_engine.load_from_file(path),
             _ => Ok(()),
-        }
+        };
+        self.model_mgr.mark_loaded(model_id, res.is_ok());
+        res
     }
 
     pub fn reload_settings(&self) {
@@ -290,6 +295,11 @@ impl DetectionEngine {
             .unwrap_or(0.35)
             .clamp(0.15, 0.90);
 
+        let motion_enabled = self.db.get_setting("detection.motion_enabled", "0") == "1";
+        let person_enabled = self.db.get_setting("detection.person_enabled", "1") != "0";
+        let animal_enabled = self.db.get_setting("detection.animal_enabled", "1") != "0";
+        let vehicle_enabled = self.db.get_setting("detection.vehicle_enabled", "1") != "0";
+
         let mut triggered_events: Vec<(
             String,
             String,
@@ -300,10 +310,26 @@ impl DetectionEngine {
         )> = Vec::new();
         let mut live_boxes_json = Vec::new();
 
+        // Lazy auto-load YOLOv8n if file exists on disk but wasn't loaded yet
+        if !self.yolo.is_loaded() {
+            if let Some(p) = self.model_mgr.model_path("yolov8n") {
+                let ok = self.yolo.load_from_file(&p).is_ok();
+                self.model_mgr.mark_loaded("yolov8n", ok);
+            }
+        }
+
         // 3. YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
-        // Always run YOLO if loaded when any slight change (> 0.15%) occurs OR periodically
-        if self.yolo.is_loaded() && motion_diff_score >= 0.0015 {
-            let detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
+        if self.yolo.is_loaded() {
+            let raw_detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
+            let detections: Vec<_> = raw_detections
+                .into_iter()
+                .filter(|d| match d.category.as_str() {
+                    "person" => person_enabled,
+                    "animal" => animal_enabled,
+                    "vehicle" => vehicle_enabled,
+                    _ => true,
+                })
+                .collect();
 
             // Evaluate ByteTrack Tripwire Line Crossing & Zone Intrusion / Loitering
             let rule_alerts =
@@ -423,43 +449,45 @@ impl DetectionEngine {
             }));
         }
 
-        // Fallback to Sensitive Pixel-Motion Bounding Box when YOLO is not yet downloaded
-        // OR when movement occurs at a distance/angle where YOLO score is below threshold
-        if triggered_events.is_empty() && motion_diff_score >= 0.004 {
+        // 4. Optional Pixel-Motion Detection (ONLY runs if user explicitly enabled `detection.motion_enabled == "1"`)
+        if motion_enabled && triggered_events.is_empty() && motion_diff_score >= 0.012 {
             if let Some((mx, my, mw, mh, lens_id)) = motion_bbox {
-                let conf = (motion_diff_score * 25.0).clamp(0.55, 0.98);
-                let lens_tag = if lens_id == 1 {
-                    "Chuyển động (Mắt 1)"
-                } else {
-                    "Chuyển động (Mắt 2)"
-                };
+                // Reject full-screen exposure/lighting shifts (area > 40% of single lens)
+                if mw * mh <= 0.22 {
+                    let conf = (motion_diff_score * 18.0).clamp(0.55, 0.96);
+                    let lens_tag = if lens_id == 1 {
+                        "Chuyển động (Mắt 1)"
+                    } else {
+                        "Chuyển động (Mắt 2)"
+                    };
 
-                live_boxes_json.push(json!({
-                    "type": "motion",
-                    "label": lens_tag,
-                    "confidence": conf,
-                    "x": mx,
-                    "y": my,
-                    "w": mw,
-                    "h": mh,
-                    "lens": lens_id
-                }));
+                    live_boxes_json.push(json!({
+                        "type": "motion",
+                        "label": lens_tag,
+                        "confidence": conf,
+                        "x": mx,
+                        "y": my,
+                        "w": mw,
+                        "h": mh,
+                        "lens": lens_id
+                    }));
 
-                self.ws_hub.broadcast(json!({
-                    "type": "ai_detections",
-                    "camera_id": camera.id,
-                    "timestamp": crate::auth::now_ms(),
-                    "boxes": live_boxes_json
-                }));
+                    self.ws_hub.broadcast(json!({
+                        "type": "ai_detections",
+                        "camera_id": camera.id,
+                        "timestamp": crate::auth::now_ms(),
+                        "boxes": live_boxes_json
+                    }));
 
-                triggered_events.push((
-                    "motion".to_string(),
-                    lens_tag.to_string(),
-                    conf,
-                    None,
-                    (mx, my, mw, mh),
-                    json!({ "lens": lens_id, "diff": motion_diff_score }).to_string(),
-                ));
+                    triggered_events.push((
+                        "motion".to_string(),
+                        lens_tag.to_string(),
+                        conf,
+                        None,
+                        (mx, my, mw, mh),
+                        json!({ "lens": lens_id, "diff": motion_diff_score }).to_string(),
+                    ));
+                }
             }
         }
 
@@ -730,9 +758,10 @@ fn draw_ai_bounding_box(
     }
 }
 
-/// Fast Frame-Differencing motion energy & Bounding Box clustering in RAM (< 0.15ms)
-/// Uses an 8:9 dual-lens resolution (160x180) so both Top Lens (0..90) and Bottom Lens (90..180)
-/// have crisp spatial resolution and returns the tight bounding box (x, y, w, h, lens_id) of moving pixels!
+/// Fast Frame-Differencing motion energy & Dense Cluster Bounding Box in RAM (< 0.15ms)
+/// Divides the 160x180 (8:9 Dual-Lens) frame into 16x18 macro-blocks (10x10 px each),
+/// filters out isolated noise/wind/leaves, and extracts the tightest dominant cluster
+/// within a single lens (Top Lens 0..9 or Bottom Lens 9..18) so the box never spans wide!
 fn compute_frame_motion_diff(
     dyn_img: &DynamicImage,
     prev_gray: &mut Option<Vec<u8>>,
@@ -745,19 +774,18 @@ fn compute_frame_motion_diff(
         .to_luma8();
     let curr: Vec<u8> = small.into_raw();
 
+    let bw_cells = 16usize; // 16 * 10 = 160
+    let bh_cells = 18usize; // 18 * 10 = 180 (0..9 = Lens 1, 9..18 = Lens 2)
+    let mut cell_hits = vec![0u16; bw_cells * bh_cells];
     let mut changed = 0usize;
     let mut total_checked = 0usize;
-    let mut min_x = gw;
-    let mut max_x = 0usize;
-    let mut min_y = gh;
-    let mut max_y = 0usize;
 
     if let Some(prev) = prev_gray.as_ref() {
         if prev.len() == curr.len() {
-            // Ignore top 6% and bottom 6% of each lens where camera OSD clock/text ticks every second
             for y in 0..gh {
                 let ny = y as f64 / gh as f64;
-                let in_osd_band = (ny < 0.055) || (ny > 0.46 && ny < 0.555) || (ny > 0.96);
+                // Ignore camera OSD clock/title bars at top/bottom of each lens
+                let in_osd_band = (ny < 0.06) || (ny > 0.45 && ny < 0.56) || (ny > 0.95);
                 if in_osd_band {
                     continue;
                 }
@@ -770,20 +798,11 @@ fn compute_frame_motion_diff(
                     total_checked += 1;
                     let idx = y * gw + x;
                     let diff = (curr[idx] as i32 - prev[idx] as i32).abs();
-                    if diff > 18 {
+                    if diff > 26 {
                         changed += 1;
-                        if x < min_x {
-                            min_x = x;
-                        }
-                        if x > max_x {
-                            max_x = x;
-                        }
-                        if y < min_y {
-                            min_y = y;
-                        }
-                        if y > max_y {
-                            max_y = y;
-                        }
+                        let cx = (x / 10).min(bw_cells - 1);
+                        let cy = (y / 10).min(bh_cells - 1);
+                        cell_hits[cy * bw_cells + cx] += 1;
                     }
                 }
             }
@@ -791,17 +810,60 @@ fn compute_frame_motion_diff(
     }
 
     *prev_gray = Some(curr);
-    if total_checked == 0 || changed < 8 {
+    if total_checked == 0 || changed < 25 {
         return (0.0, None);
     }
 
     let score = changed as f64 / total_checked as f64;
-    let bx = (min_x as f64 / gw.max(1) as f64).clamp(0.0, 0.95);
-    let by = (min_y as f64 / gh as f64).clamp(0.0, 0.95);
-    let bw = ((max_x.saturating_sub(min_x) as f64 / gw as f64) + 0.03).clamp(0.05, 1.0 - bx);
-    let bh = ((max_y.saturating_sub(min_y) as f64 / gh as f64) + 0.03).clamp(0.05, 1.0 - by);
-    let center_y = by + bh * 0.5;
-    let lens_id = if center_y < 0.5 { 1 } else { 2 };
+
+    // Find the hottest 10x10 macro-block (must have >= 30% of its 100 pixels changed)
+    let mut best_cell = None;
+    let mut best_val = 29u16;
+    for cy in 0..bh_cells {
+        for cx in 0..bw_cells {
+            let v = cell_hits[cy * bw_cells + cx];
+            if v > best_val {
+                best_val = v;
+                best_cell = Some((cx, cy));
+            }
+        }
+    }
+
+    let Some((seed_cx, seed_cy)) = best_cell else {
+        return (score, None);
+    };
+
+    // Restrict cluster growth strictly to the same lens as the seed cell (0..9 or 9..18)
+    // and within a localized 5x4 neighborhood around the core movement so the box is tight!
+    let lens_id: u8 = if seed_cy < 9 { 1 } else { 2 };
+    let (cy_min_bound, cy_max_bound) = if lens_id == 1 { (0, 8) } else { (9, 17) };
+
+    let mut min_cx = seed_cx;
+    let mut max_cx = seed_cx;
+    let mut min_cy = seed_cy;
+    let mut max_cy = seed_cy;
+
+    for cy in cy_min_bound..=cy_max_bound {
+        if (cy as i32 - seed_cy as i32).abs() > 3 {
+            continue;
+        }
+        for cx in 0..bw_cells {
+            if (cx as i32 - seed_cx as i32).abs() > 3 {
+                continue;
+            }
+            if cell_hits[cy * bw_cells + cx] >= 22 {
+                min_cx = min_cx.min(cx);
+                max_cx = max_cx.max(cx);
+                min_cy = min_cy.min(cy);
+                max_cy = max_cy.max(cy);
+            }
+        }
+    }
+
+    let bx = (min_cx as f64 / bw_cells as f64).clamp(0.0, 0.94);
+    let by = (min_cy as f64 / bh_cells as f64).clamp(0.0, 0.94);
+    let bw = (((max_cx - min_cx + 1) as f64) / bw_cells as f64).clamp(0.06, 1.0 - bx);
+    let bh = (((max_cy - min_cy + 1) as f64) / bh_cells as f64).clamp(0.06, 0.48);
 
     (score, Some((bx, by, bw, bh, lens_id)))
 }
