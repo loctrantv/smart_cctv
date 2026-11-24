@@ -107,7 +107,7 @@ impl AlprEngine {
 
         let mut input = vec![0.0f32; 3 * 640 * 640];
         let plane = 640 * 640;
-        for (y, x, p) in resized.enumerate_pixels() {
+        for (x, y, p) in resized.enumerate_pixels() {
             let idx = (y as usize) * 640 + (x as usize);
             input[idx] = p[0] as f32 / 255.0;
             input[plane + idx] = p[1] as f32 / 255.0;

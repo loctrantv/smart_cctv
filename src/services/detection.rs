@@ -886,7 +886,13 @@ impl DetectionEngine {
         let engine = self.clone();
         let cam_clone = camera.clone();
         let prev_gray_in = prev_gray_thumb.take();
-        let can_save_event = last_event_time.elapsed() >= Duration::from_secs(4);
+        let cooldown_secs = self
+            .db
+            .get_setting("detection.cooldown_seconds", "30")
+            .parse::<u64>()
+            .unwrap_or(30)
+            .clamp(5, 300);
+        let can_save_event = last_event_time.elapsed() >= Duration::from_secs(cooldown_secs);
 
         let blocking_res = tokio::task::spawn_blocking(move || {
             engine.analyze_frame_blocking(&cam_clone, &jpeg_bytes, prev_gray_in, can_save_event)
@@ -1192,9 +1198,35 @@ impl DetectionEngine {
             }
         }
 
-        for (evt_type, label, conf, face_id, (bx, by, bw, bh), meta) in
-            triggered_events.into_iter().take(2)
-        {
+        // Prioritize the most important event and deduplicate identical events in the same frame
+        // so parked vehicles or stationary pets never spam multiple rows per snapshot.
+        triggered_events.sort_by(|a, b| {
+            let prio = |t: &str| match t {
+                "face" => 0,
+                "intrusion" => 1,
+                "line_crossing" => 2,
+                "plate" => 3,
+                "person" => 4,
+                "vehicle" => 5,
+                "animal" => 6,
+                _ => 7,
+            };
+            prio(&a.0)
+                .cmp(&prio(&b.0))
+                .then_with(|| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+        });
+
+        let mut deduped = Vec::new();
+        for ev in triggered_events {
+            if !deduped.iter().any(|existing: &(String, String, f64, Option<String>, (f64, f64, f64, f64), String)| existing.0 == ev.0 && existing.1 == ev.1) {
+                deduped.push(ev);
+            }
+            if deduped.len() >= 1 {
+                break;
+            }
+        }
+
+        for (evt_type, label, conf, face_id, (bx, by, bw, bh), meta) in deduped {
             self.record_event(
                 camera,
                 &evt_type,

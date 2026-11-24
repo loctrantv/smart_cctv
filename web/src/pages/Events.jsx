@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getEvents, getEventStats, getCameras, getMediaUrl, deleteEvent, deleteEvents } from '../utils/api';
+import {
+  getEvents,
+  getEventStats,
+  getCameras,
+  getMediaUrl,
+  deleteEvent,
+  deleteEvents,
+  cleanupEvents,
+} from '../utils/api';
 import { format } from 'date-fns';
 import {
   TechSelect,
@@ -25,6 +33,7 @@ import {
   Search,
   Image as ImageIcon,
   Camera,
+  Clock,
 } from 'lucide-react';
 import { useApp } from '../App';
 
@@ -133,6 +142,8 @@ export default function Events() {
   const [loading, setLoading] = useState(true);
   const [zoomImage, setZoomImage] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [cleanupMode, setCleanupMode] = useState('older_24h');
+  const [cleaning, setCleaning] = useState(false);
   const { ws, refreshGlobalStats } = useApp();
   const navigate = useNavigate();
 
@@ -234,6 +245,94 @@ export default function Events() {
         'Không thể xóa các sự kiện: ' + (err.response?.data?.error || err.message),
         'error'
       );
+    }
+  };
+
+  const handleCleanupByTime = async () => {
+    const modeMeta = {
+      older_1h: {
+        label: 'cũ hơn 1 giờ',
+        payload: { older_than_hours: 1 },
+      },
+      older_24h: {
+        label: 'cũ hơn 24 giờ',
+        payload: { older_than_hours: 24 },
+      },
+      older_3d: {
+        label: 'cũ hơn 3 ngày',
+        payload: { older_than_hours: 72 },
+      },
+      older_7d: {
+        label: 'cũ hơn 7 ngày',
+        payload: { older_than_hours: 168 },
+      },
+      older_30d: {
+        label: 'cũ hơn 30 ngày',
+        payload: { older_than_hours: 720 },
+      },
+      filtered: {
+        label: 'khớp với bộ lọc hiện tại (Camera / Loại / Ngày)',
+        payload: {
+          ...(filters.camera_id ? { camera_id: filters.camera_id } : {}),
+          ...(filters.type ? { type: filters.type } : {}),
+          ...(filters.date
+            ? {
+                start: `${filters.date} 00:00:00`,
+                end: `${filters.date} 23:59:59`,
+              }
+            : {}),
+          ...(!filters.camera_id && !filters.type && !filters.date ? { all: true } : {}),
+        },
+      },
+      all: {
+        label: 'TOÀN BỘ sự kiện trong hệ thống',
+        payload: { all: true },
+      },
+    };
+
+    const selected = modeMeta[cleanupMode] || modeMeta.older_24h;
+    const payload = { ...selected.payload };
+    // Respect active camera/type filter when cleaning by age if user filtered a specific channel/type
+    if (cleanupMode.startsWith('older_')) {
+      if (filters.camera_id) payload.camera_id = filters.camera_id;
+      if (filters.type) payload.type = filters.type;
+    }
+
+    const scopeNote =
+      cleanupMode.startsWith('older_') && (filters.camera_id || filters.type)
+        ? ' (áp dụng cho bộ lọc Camera / Loại đang chọn)'
+        : '';
+
+    const ok = await confirmDialog({
+      title: 'DỌN DẸP SỰ KIỆN THEO THỜI GIAN',
+      message: `Hệ thống sẽ xóa vĩnh viễn toàn bộ sự kiện ${selected.label}${scopeNote} cùng ảnh Snapshot tương ứng trên ổ đĩa. Bạn có chắc chắn?`,
+      confirmText: 'Dọn dẹp ngay',
+      cancelText: 'Hủy',
+      danger: true,
+    });
+    if (!ok) return;
+
+    setCleaning(true);
+    try {
+      const res = await cleanupEvents(payload);
+      const deletedCount = res?.deleted || 0;
+      const filesCount = res?.files_removed || 0;
+      showToast(
+        deletedCount > 0
+          ? `Đã dọn ${deletedCount} sự kiện và giải phóng ${filesCount} ảnh Snapshot`
+          : 'Không có sự kiện nào trong khoảng thời gian đã chọn',
+        deletedCount > 0 ? 'success' : 'info'
+      );
+      setSelectedIds(new Set());
+      fetchEvents();
+      if (refreshGlobalStats) refreshGlobalStats();
+    } catch (err) {
+      showToast(
+        'Lỗi dọn dẹp sự kiện: ' + (err.response?.data?.error || err.message),
+        'error'
+      );
+    } finally {
+      setCleaning(false);
     }
   };
 
@@ -404,6 +503,44 @@ export default function Events() {
               <List size={13} /> <span>Danh sách</span>
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Time-Based Bulk Event Cleanup Bar */}
+      <div className="vms-cleanup-strip mb-3">
+        <div className="vms-cleanup-strip-left">
+          <Clock size={14} style={{ color: 'var(--warning)' }} />
+          <span>
+            <strong style={{ color: 'var(--text-primary)' }}>Dọn sự kiện nhanh theo thời gian</strong>
+            {(filters.camera_id || filters.type) && (
+              <span> · Đang áp dụng bộ lọc hiện tại</span>
+            )}
+          </span>
+        </div>
+        <div className="vms-cleanup-strip-right">
+          <TechSelect
+            icon={Clock}
+            value={cleanupMode}
+            onChange={setCleanupMode}
+            options={[
+              { value: 'older_1h', label: 'Xóa sự kiện cũ hơn 1 giờ' },
+              { value: 'older_24h', label: 'Xóa sự kiện cũ hơn 24 giờ' },
+              { value: 'older_3d', label: 'Xóa sự kiện cũ hơn 3 ngày' },
+              { value: 'older_7d', label: 'Xóa sự kiện cũ hơn 7 ngày' },
+              { value: 'older_30d', label: 'Xóa sự kiện cũ hơn 30 ngày' },
+              { value: 'filtered', label: 'Xóa theo bộ lọc đang xem' },
+              { value: 'all', label: 'Xóa toàn bộ sự kiện' },
+            ]}
+          />
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            onClick={handleCleanupByTime}
+            disabled={cleaning}
+          >
+            <Trash2 size={13} />
+            <span>{cleaning ? 'Đang dọn...' : 'Dọn ngay'}</span>
+          </button>
         </div>
       </div>
 

@@ -325,8 +325,11 @@ pub async fn bulk_delete_events_handler(
     Query(query): Query<HashMap<String, String>>,
     body_opt: Option<Json<Value>>,
 ) -> Response {
-    let ids: Vec<String> = body_opt
-        .and_then(|b| b.get("ids").cloned())
+    let body = body_opt.map(|b| b.0).unwrap_or_else(|| json!({}));
+
+    let ids: Vec<String> = body
+        .get("ids")
+        .cloned()
         .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
         .unwrap_or_default()
         .into_iter()
@@ -335,6 +338,7 @@ pub async fn bulk_delete_events_handler(
 
     if !ids.is_empty() {
         let mut deleted = 0usize;
+        let mut files_removed = 0usize;
         for id in ids {
             let snap_opt: Option<Option<String>> = state.db.with_conn(|conn| {
                 conn.query_row(
@@ -347,7 +351,9 @@ pub async fn bulk_delete_events_handler(
             });
             if let Some(Some(rel)) = snap_opt {
                 if let Some(full) = resolve_safe_path(&state.config.snapshots_path, &rel) {
-                    let _ = fs::remove_file(full);
+                    if fs::remove_file(full).is_ok() {
+                        files_removed += 1;
+                    }
                 }
             }
             let changes = state.db.with_conn(|conn| {
@@ -356,38 +362,153 @@ pub async fn bulk_delete_events_handler(
             });
             deleted += changes;
         }
-        return Json(json!({ "deleted": deleted })).into_response();
+        return Json(json!({ "deleted": deleted, "files_removed": files_removed })).into_response();
     }
 
-    if let Some(cid) = query.get("camera_id").filter(|s| !s.is_empty()) {
-        let snaps: Vec<String> = state.db.with_conn(|conn| {
-            let mut list = Vec::new();
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT snapshot_path FROM events WHERE camera_id = ?1 AND snapshot_path IS NOT NULL",
-            ) {
-                if let Ok(rows) = stmt.query_map(params![cid], |r| r.get::<_, String>(0)) {
-                    for s in rows.flatten() {
-                        list.push(s);
-                    }
+    // Time-based & filter-based bulk cleanup
+    let older_than_hours = body
+        .get("older_than_hours")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .or_else(|| {
+            query
+                .get("older_than_hours")
+                .and_then(|s| s.parse::<i64>().ok())
+        })
+        .filter(|&h| h > 0);
+
+    let before = body
+        .get("before")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            query
+                .get("before")
+                .filter(|s| !s.trim().is_empty())
+                .cloned()
+        });
+
+    let start = body
+        .get("start")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| query.get("start").filter(|s| !s.trim().is_empty()).cloned());
+
+    let end = body
+        .get("end")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| query.get("end").filter(|s| !s.trim().is_empty()).cloned());
+
+    let camera_id = body
+        .get("camera_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            query
+                .get("camera_id")
+                .filter(|s| !s.trim().is_empty())
+                .cloned()
+        });
+
+    let evt_type = body
+        .get("type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| query.get("type").filter(|s| !s.trim().is_empty()).cloned());
+
+    let delete_all = body
+        .get("all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| query.get("all").map(|s| s == "1" || s == "true").unwrap_or(false));
+
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut sql_params: Vec<SqlValue> = Vec::new();
+
+    if let Some(hours) = older_than_hours {
+        where_clauses.push("timestamp < datetime('now', '-' || ? || ' hours')".to_string());
+        sql_params.push(SqlValue::Integer(hours.clamp(1, 24 * 3650)));
+    }
+    if let Some(b) = before {
+        where_clauses.push("timestamp <= ?".to_string());
+        sql_params.push(SqlValue::Text(b));
+    }
+    if let Some(st) = start {
+        where_clauses.push("timestamp >= ?".to_string());
+        sql_params.push(SqlValue::Text(st));
+    }
+    if let Some(en) = end {
+        where_clauses.push("timestamp <= ?".to_string());
+        sql_params.push(SqlValue::Text(en));
+    }
+    if let Some(cid) = camera_id {
+        where_clauses.push("camera_id = ?".to_string());
+        sql_params.push(SqlValue::Text(cid));
+    }
+    if let Some(t) = evt_type {
+        where_clauses.push("type = ?".to_string());
+        sql_params.push(SqlValue::Text(t));
+    }
+
+    if where_clauses.is_empty() && !delete_all {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Vui lòng chọn sự kiện hoặc khoảng thời gian cần dọn dẹp" })),
+        )
+            .into_response();
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        "1=1".to_string()
+    } else {
+        where_clauses.join(" AND ")
+    };
+
+    let snaps: Vec<String> = state.db.with_conn(|conn| {
+        let mut list = Vec::new();
+        let sql = format!(
+            "SELECT snapshot_path FROM events WHERE {} AND snapshot_path IS NOT NULL",
+            where_sql
+        );
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            if let Ok(rows) =
+                stmt.query_map(rusqlite::params_from_iter(sql_params.iter()), |r| {
+                    r.get::<_, String>(0)
+                })
+            {
+                for s in rows.flatten() {
+                    list.push(s);
                 }
             }
-            list
-        });
-        for rel in snaps {
-            if let Some(full) = resolve_safe_path(&state.config.snapshots_path, &rel) {
-                let _ = fs::remove_file(full);
+        }
+        list
+    });
+
+    let mut files_removed = 0usize;
+    for rel in snaps {
+        if let Some(full) = resolve_safe_path(&state.config.snapshots_path, &rel) {
+            if fs::remove_file(full).is_ok() {
+                files_removed += 1;
             }
         }
-        let deleted = state.db.with_conn(|conn| {
-            conn.execute("DELETE FROM events WHERE camera_id = ?1", params![cid])
-                .unwrap_or(0)
-        });
-        return Json(json!({ "deleted": deleted })).into_response();
     }
 
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "error": "Vui lòng chọn ít nhất một sự kiện để xóa" })),
-    )
-        .into_response()
+    let deleted = state.db.with_conn(|conn| {
+        let sql = format!("DELETE FROM events WHERE {}", where_sql);
+        conn.execute(&sql, rusqlite::params_from_iter(sql_params.iter()))
+            .unwrap_or(0)
+    });
+
+    Json(json!({
+        "deleted": deleted,
+        "files_removed": files_removed
+    }))
+    .into_response()
 }

@@ -571,7 +571,7 @@ export default function SettingsPage() {
               </span>
             </div>
             <div className="card-body" style={{ padding: 16 }}>
-              <div className="vms-grid-2">
+              <div className="vms-grid-3">
                 <TechNumberInput
                   label="Chu kỳ quét khung hình"
                   hint="Giá trị nhỏ = phát hiện nhanh hơn (Khuyến nghị: 2000 – 3000 ms)"
@@ -587,13 +587,26 @@ export default function SettingsPage() {
 
                 <TechNumberInput
                   label="Ngưỡng độ tin cậy AI (Confidence)"
-                  hint="Phạm vi từ 0.15 đến 0.95 (Khuyến nghị: 0.30 – 0.45)"
+                  hint="Phạm vi từ 0.15 đến 0.95 (Khuyến nghị: 0.35 – 0.50)"
                   value={settings['detection.confidence_threshold'] || '0.35'}
                   min={0.15}
                   max={0.95}
                   step={0.05}
                   onChange={(val) =>
                     setSettings({ ...settings, 'detection.confidence_threshold': val })
+                  }
+                />
+
+                <TechNumberInput
+                  label="Giãn cách chống spam sự kiện"
+                  hint="Thời gian chờ tối thiểu giữa 2 lần lưu cảnh báo trên cùng 1 camera (Khuyến nghị: 30 – 60 giây)"
+                  value={settings['detection.cooldown_seconds'] || '30'}
+                  min={5}
+                  max={300}
+                  step={5}
+                  unit="GIÂY"
+                  onChange={(val) =>
+                    setSettings({ ...settings, 'detection.cooldown_seconds': val })
                   }
                 />
               </div>
@@ -975,39 +988,41 @@ export default function SettingsPage() {
           </div>
           <div className="card-body" style={{ padding: 16 }}>
             <form onSubmit={handlePasswordChange}>
-              <TechInput
-                label="Tên đăng nhập quản trị"
-                icon={User}
-                value={pwdForm.newUsername}
-                onChange={(e) => setPwdForm({ ...pwdForm, newUsername: e.target.value })}
-              />
+              <div className="vms-grid-2">
+                <TechInput
+                  label="Tên đăng nhập quản trị"
+                  icon={User}
+                  value={pwdForm.newUsername}
+                  onChange={(e) => setPwdForm({ ...pwdForm, newUsername: e.target.value })}
+                />
 
-              <TechInput
-                label="Mật khẩu hiện tại *"
-                icon={Lock}
-                type="password"
-                placeholder="Nhập mật khẩu hiện tại"
-                value={pwdForm.currentPassword}
-                onChange={(e) => setPwdForm({ ...pwdForm, currentPassword: e.target.value })}
-              />
+                <TechInput
+                  label="Mật khẩu hiện tại *"
+                  icon={Lock}
+                  type="password"
+                  placeholder="Nhập mật khẩu hiện tại"
+                  value={pwdForm.currentPassword}
+                  onChange={(e) => setPwdForm({ ...pwdForm, currentPassword: e.target.value })}
+                />
 
-              <TechInput
-                label="Mật khẩu mới * (Tối thiểu 8 ký tự, băm scrypt)"
-                icon={Lock}
-                type="password"
-                placeholder="Nhập mật khẩu mới"
-                value={pwdForm.newPassword}
-                onChange={(e) => setPwdForm({ ...pwdForm, newPassword: e.target.value })}
-              />
+                <TechInput
+                  label="Mật khẩu mới * (Tối thiểu 8 ký tự, băm scrypt)"
+                  icon={Lock}
+                  type="password"
+                  placeholder="Nhập mật khẩu mới"
+                  value={pwdForm.newPassword}
+                  onChange={(e) => setPwdForm({ ...pwdForm, newPassword: e.target.value })}
+                />
 
-              <TechInput
-                label="Xác nhận mật khẩu mới *"
-                icon={Lock}
-                type="password"
-                placeholder="Nhập lại mật khẩu mới"
-                value={pwdForm.confirmPassword}
-                onChange={(e) => setPwdForm({ ...pwdForm, confirmPassword: e.target.value })}
-              />
+                <TechInput
+                  label="Xác nhận mật khẩu mới *"
+                  icon={Lock}
+                  type="password"
+                  placeholder="Nhập lại mật khẩu mới"
+                  value={pwdForm.confirmPassword}
+                  onChange={(e) => setPwdForm({ ...pwdForm, confirmPassword: e.target.value })}
+                />
+              </div>
 
               <div className="mt-4 flex justify-end">
                 <button type="submit" className="tech-btn tech-btn-primary" disabled={pwdSaving}>

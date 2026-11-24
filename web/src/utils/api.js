@@ -88,6 +88,8 @@ export const getEvents = (params) => api.get('/events', { params }).then((r) => 
 export const getEventStats = (params) => api.get('/events/stats', { params }).then((r) => r.data);
 export const deleteEvent = (id) => api.delete(`/events/${id}`).then((r) => r.data);
 export const deleteEvents = (ids) => api.delete('/events', { data: { ids } }).then((r) => r.data);
+export const cleanupEvents = (payload) =>
+  api.delete('/events', { data: payload }).then((r) => r.data);
 
 // Faces
 export const getFaces = () => api.get('/faces').then((r) => r.data);

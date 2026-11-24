@@ -197,7 +197,7 @@ impl YoloDetector {
         let pad_val = 114.0f32 / 255.0;
         let mut input_data = vec![pad_val; 3 * 640 * 640];
         let plane_size = 640 * 640;
-        for (y, x, pixel) in resized.enumerate_pixels() {
+        for (x, y, pixel) in resized.enumerate_pixels() {
             let dst_x = (x + pad_x) as usize;
             let dst_y = (y + pad_y) as usize;
             let idx = dst_y * 640 + dst_x;

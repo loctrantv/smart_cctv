@@ -194,7 +194,7 @@ impl FaceEngine {
         let plane = 112 * 112;
         let sface_raw_rgb = *self.is_sface.lock().unwrap_or_else(|e| e.into_inner());
 
-        for (y, x, p) in rgb112.enumerate_pixels() {
+        for (x, y, p) in rgb112.enumerate_pixels() {
             let idx = (y as usize) * 112 + (x as usize);
             if sface_raw_rgb {
                 // OpenCV Zoo SFace (`face_recognition_sface_2021dec.onnx`):
