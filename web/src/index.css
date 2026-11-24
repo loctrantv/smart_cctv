@@ -5184,3 +5184,129 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   AI VIDEO TEST RUNNER & REAL-TIME LOG CONSOLE
+   ============================================================ */
+
+.vms-test-upload-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 14px;
+  border-radius: 8px;
+  border: 1px dashed rgba(0, 212, 255, 0.45);
+  background: rgba(0, 212, 255, 0.04);
+  cursor: pointer;
+  text-align: center;
+  transition: all 140ms ease;
+}
+
+.vms-test-upload-box:hover {
+  border-color: var(--accent);
+  background: rgba(0, 212, 255, 0.09);
+}
+
+.vms-test-summary-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vms-test-frames-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.vms-test-frame-card {
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.vms-test-frame-card img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+.vms-test-frame-meta {
+  padding: 8px 10px;
+  font-size: 0.72rem;
+}
+
+.vms-log-console {
+  background: #05060c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  height: 360px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.73rem;
+  line-height: 1.55;
+}
+
+.vms-log-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  word-break: break-word;
+}
+
+.vms-log-line .log-ts {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.vms-log-line .log-lvl {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.vms-log-line .log-mod {
+  color: var(--accent);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.vms-log-line .log-msg {
+  color: #e4e6f0;
+  flex: 1;
+  min-width: 160px;
+}
+
+.vms-log-line.level-info .log-lvl {
+  color: #38bdf8;
+}
+
+.vms-log-line.level-event .log-lvl {
+  color: #00ff88;
+}
+
+.vms-log-line.level-warn .log-lvl {
+  color: #ffaa00;
+}
+
+.vms-log-line.level-error .log-lvl {
+  color: #ff453a;
+}
+
+@media (max-width: 768px) {
+  .vms-test-frames-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vms-log-console {
+    height: 300px;
+    font-size: 0.68rem;
+  }
+}

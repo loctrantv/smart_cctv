@@ -25,6 +25,39 @@ use crate::security::{resolve_safe_path, DetectionZone, TripwireLine};
 use crate::services::{go2rtc::Go2RtcClient, recording::RecordingManager};
 use crate::ws::WsHub;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiTestDetectionBox {
+    pub r#type: String,
+    pub label: String,
+    pub confidence: f64,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub lens: u8,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiTestFrameResult {
+    pub frame_index: usize,
+    pub inference_ms: u64,
+    pub snapshot_path: Option<String>,
+    pub detections: Vec<AiTestDetectionBox>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiTestSummary {
+    pub total_frames: usize,
+    pub frames_with_detections: usize,
+    pub elapsed_ms: u64,
+    pub yolo_loaded: bool,
+    pub face_loaded: bool,
+    pub alpr_loaded: bool,
+    pub conf_threshold: f32,
+    pub counts: HashMap<String, usize>,
+    pub frames: Vec<AiTestFrameResult>,
+}
+
 #[derive(Clone)]
 pub struct DetectionEngine {
     db: Database,
@@ -95,10 +128,19 @@ impl DetectionEngine {
                         Ok(()) => {
                             eng.model_mgr.mark_loaded("yolov8n", true);
                             eng.warned_yolo_missing.store(false, Ordering::Relaxed);
+                            eng.ws_hub.push_log(
+                                "INFO",
+                                "YOLO",
+                                "Đã nạp thành công model YOLOv8n ONNX vào bộ nhớ Rust",
+                            );
                         }
                         Err(e) => {
                             eng.model_mgr.mark_loaded("yolov8n", false);
-                            tracing::error!("[AI Boot] Failed loading yolov8n: {}", e);
+                            eng.ws_hub.push_log(
+                                "ERROR",
+                                "YOLO",
+                                format!("Lỗi nạp model YOLOv8n: {}", e),
+                            );
                         }
                     })
                     .await;
@@ -113,11 +155,20 @@ impl DetectionEngine {
                         match eng.face_engine.load_rec_model(&p) {
                             Ok(()) => {
                                 eng.model_mgr.mark_loaded("arcface_mbf", true);
+                                eng.ws_hub.push_log(
+                                    "INFO",
+                                    "FACE",
+                                    "Đã nạp thành công model ArcFace/SFace 112x112",
+                                );
                                 eng.reindex_known_faces();
                             }
                             Err(e) => {
                                 eng.model_mgr.mark_loaded("arcface_mbf", false);
-                                tracing::error!("[AI Boot] Failed loading arcface_mbf: {}", e);
+                                eng.ws_hub.push_log(
+                                    "ERROR",
+                                    "FACE",
+                                    format!("Lỗi nạp model ArcFace/SFace: {}", e),
+                                );
                             }
                         }
                     })
@@ -131,10 +182,21 @@ impl DetectionEngine {
                     let eng = engine.clone();
                     let _ = tokio::task::spawn_blocking(move || {
                         match eng.alpr_engine.load_from_file(&p) {
-                            Ok(()) => eng.model_mgr.mark_loaded("alpr_plate", true),
+                            Ok(()) => {
+                                eng.model_mgr.mark_loaded("alpr_plate", true);
+                                eng.ws_hub.push_log(
+                                    "INFO",
+                                    "ALPR",
+                                    "Đã nạp thành công model nhận diện biển số ALPR",
+                                );
+                            }
                             Err(e) => {
                                 eng.model_mgr.mark_loaded("alpr_plate", false);
-                                tracing::error!("[AI Boot] Failed loading alpr_plate: {}", e);
+                                eng.ws_hub.push_log(
+                                    "ERROR",
+                                    "ALPR",
+                                    format!("Lỗi nạp model ALPR: {}", e),
+                                );
                             }
                         }
                     })
@@ -181,11 +243,349 @@ impl DetectionEngine {
             }
         }
         if updated_count > 0 {
-            tracing::info!(
-                "[AI Face] Re-indexed {} registered face(s) to match active SFace/ArcFace model",
-                updated_count
+            self.ws_hub.push_log(
+                "INFO",
+                "FACE",
+                format!(
+                    "Đã đồng bộ lại vector đặc trưng cho {} hồ sơ khuôn mặt theo model hiện tại",
+                    updated_count
+                ),
             );
         }
+    }
+
+    /// Run offline AI benchmark/test against an uploaded test video (MP4/MOV/MKV/AVI/WebM)
+    /// or test image (JPEG/PNG/WebP), streaming step-by-step logs to the UI console and
+    /// saving annotated preview frames with bounding boxes.
+    pub async fn run_ai_test_media(
+        &self,
+        media_bytes: Vec<u8>,
+        filename: String,
+        is_image: bool,
+        sample_fps: f32,
+        max_frames: usize,
+        conf_threshold: f32,
+    ) -> Result<AiTestSummary, String> {
+        let safe_fps = sample_fps.clamp(0.2, 2.0);
+        let safe_max = max_frames.clamp(1, 30);
+        let safe_conf = conf_threshold.clamp(0.15, 0.90);
+        let yolo_loaded = self.yolo.is_loaded();
+        let face_loaded = self.face_engine.is_loaded();
+        let alpr_loaded = self.alpr_engine.is_loaded();
+
+        self.ws_hub.push_log(
+            "INFO",
+            "TEST",
+            format!(
+                "Bắt đầu kiểm thử AI trên '{}' (YOLOv8n={}, ArcFace={}, ALPR={}, conf={:.2}, max_frames={})",
+                filename, yolo_loaded, face_loaded, alpr_loaded, safe_conf, safe_max
+            ),
+        );
+
+        if !yolo_loaded {
+            let msg = "Model YOLOv8n chưa được nạp vào bộ nhớ! Hãy tải model 'yolov8n' trong tab Phát hiện AI trước.".to_string();
+            self.ws_hub.push_log("ERROR", "TEST", msg.clone());
+            return Err(msg);
+        }
+
+        let start_all = Instant::now();
+        let raw_frames: Vec<Vec<u8>> = if is_image {
+            vec![media_bytes]
+        } else {
+            let tmp_dir = self
+                .snapshots_path
+                .join("_ai_test_tmp")
+                .join(Uuid::new_v4().to_string());
+            fs::create_dir_all(&tmp_dir)
+                .map_err(|e| format!("Không thể tạo thư mục tạm kiểm thử: {}", e))?;
+
+            let ext = Path::new(&filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_lowercase())
+                .filter(|s| matches!(s.as_str(), "mp4" | "mkv" | "mov" | "avi" | "webm"))
+                .unwrap_or_else(|| "mp4".to_string());
+            let input_video = tmp_dir.join(format!("input.{}", ext));
+            if let Err(e) = fs::write(&input_video, &media_bytes) {
+                let _ = fs::remove_dir_all(&tmp_dir);
+                return Err(format!("Không thể ghi file video tạm: {}", e));
+            }
+
+            let out_pattern = tmp_dir.join("frame_%03d.jpg");
+            let vf_arg = format!("fps={:.2}", safe_fps);
+            let mut cmd = Command::new("ffmpeg");
+            cmd.args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+            ])
+            .arg(&input_video)
+            .args([
+                "-vf",
+                &vf_arg,
+                "-frames:v",
+                &safe_max.to_string(),
+                "-strict",
+                "-1",
+                "-pix_fmt",
+                "yuvj420p",
+                "-q:v",
+                "3",
+            ])
+            .arg(&out_pattern)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+            let child = cmd.spawn().map_err(|e| {
+                let _ = fs::remove_dir_all(&tmp_dir);
+                format!("Không thể chạy FFmpeg để tách khung hình video: {}", e)
+            })?;
+
+            let out = match tokio::time::timeout(Duration::from_secs(35), child.wait_with_output())
+                .await
+            {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => {
+                    let _ = fs::remove_dir_all(&tmp_dir);
+                    return Err(format!("Lỗi FFmpeg khi đọc video test: {}", e));
+                }
+                Err(_) => {
+                    let _ = fs::remove_dir_all(&tmp_dir);
+                    return Err("Quá thời gian tách khung hình từ video test (35s)".to_string());
+                }
+            };
+
+            if !out.status.success() {
+                let err_txt = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let _ = fs::remove_dir_all(&tmp_dir);
+                let msg = format!("FFmpeg không thể giải mã video test: {}", err_txt);
+                self.ws_hub.push_log("ERROR", "TEST", msg.clone());
+                return Err(msg);
+            }
+
+            let mut frame_paths: Vec<PathBuf> = fs::read_dir(&tmp_dir)
+                .map_err(|e| format!("Không đọc được thư mục khung hình tạm: {}", e))?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.starts_with("frame_") && s.ends_with(".jpg"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            frame_paths.sort();
+
+            let mut loaded_frames = Vec::with_capacity(frame_paths.len());
+            for fp in frame_paths {
+                if let Ok(b) = fs::read(&fp) {
+                    if b.len() > 500 {
+                        loaded_frames.push(b);
+                    }
+                }
+            }
+            let _ = fs::remove_dir_all(&tmp_dir);
+            loaded_frames
+        };
+
+        if raw_frames.is_empty() {
+            let msg = "Không trích xuất được khung hình nào từ file kiểm thử.".to_string();
+            self.ws_hub.push_log("WARN", "TEST", msg.clone());
+            return Err(msg);
+        }
+
+        self.ws_hub.push_log(
+            "INFO",
+            "TEST",
+            format!(
+                "Đã trích xuất {} khung hình — bắt đầu chạy suy luận YOLOv8n + ArcFace...",
+                raw_frames.len()
+            ),
+        );
+
+        let _permit = self
+            .ai_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "AI engine semaphore closed".to_string())?;
+
+        let engine = self.clone();
+        let summary = tokio::task::spawn_blocking(move || {
+            let known_faces = engine.db.list_faces();
+            let face_thresh = engine.face_engine.recommended_threshold();
+            let test_dir = engine.snapshots_path.join("ai_test");
+            let _ = fs::create_dir_all(&test_dir);
+            let run_ts = crate::auth::now_ms();
+
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            let mut frames_out = Vec::with_capacity(raw_frames.len());
+            let mut frames_with_detections = 0usize;
+            let mut saved_previews = 0usize;
+
+            for (i, jpeg) in raw_frames.iter().enumerate() {
+                let frame_idx = i + 1;
+                let t0 = Instant::now();
+                let Ok(dyn_img) = image::load_from_memory(jpeg) else {
+                    engine.ws_hub.push_log(
+                        "WARN",
+                        "TEST",
+                        format!("Frame #{}: Không thể giải mã ảnh JPEG", frame_idx),
+                    );
+                    continue;
+                };
+                let mut rgb_img = dyn_img.to_rgb8();
+                let raw_dets = engine.yolo.detect_dual_lens(&rgb_img, safe_conf);
+                let mut frame_boxes = Vec::new();
+
+                for det in &raw_dets {
+                    let mut box_type = det.category.clone();
+                    let mut box_label = det.label.clone();
+                    let mut box_conf = det.confidence as f64;
+
+                    if det.category == "person" && !known_faces.is_empty() {
+                        if let Some(face_match) = engine.face_engine.match_person_crop(
+                            &rgb_img,
+                            det.x,
+                            det.y,
+                            det.w,
+                            det.h,
+                            &known_faces,
+                            face_thresh,
+                        ) {
+                            box_type = "face".to_string();
+                            box_label = face_match.name.clone();
+                            box_conf = face_match.similarity as f64;
+                        }
+                    }
+
+                    if det.category == "vehicle" && engine.alpr_engine.is_loaded() {
+                        if let Some(plate) = engine.alpr_engine.recognize_from_vehicle_crop(
+                            &rgb_img, det.x, det.y, det.w, det.h,
+                        ) {
+                            *counts.entry("plate".to_string()).or_insert(0) += 1;
+                            frame_boxes.push(AiTestDetectionBox {
+                                r#type: "plate".to_string(),
+                                label: plate.plate_number,
+                                confidence: plate.confidence as f64,
+                                x: plate.x,
+                                y: plate.y,
+                                w: plate.w,
+                                h: plate.h,
+                                lens: det.lens,
+                            });
+                        }
+                    }
+
+                    *counts.entry(box_type.clone()).or_insert(0) += 1;
+                    frame_boxes.push(AiTestDetectionBox {
+                        r#type: box_type,
+                        label: box_label,
+                        confidence: box_conf,
+                        x: det.x,
+                        y: det.y,
+                        w: det.w,
+                        h: det.h,
+                        lens: det.lens,
+                    });
+                }
+
+                let inf_ms = t0.elapsed().as_millis() as u64;
+                if !frame_boxes.is_empty() {
+                    frames_with_detections += 1;
+                }
+
+                // Save annotated preview for detected frames (up to 12) or frame #1 so user can inspect visually
+                let should_save = (!frame_boxes.is_empty() && saved_previews < 12) || frame_idx == 1;
+                let mut rel_snap = None;
+                if should_save {
+                    for b in &frame_boxes {
+                        let color = match b.r#type.as_str() {
+                            "person" => [0, 212, 255],
+                            "face" => [168, 85, 247],
+                            "animal" => [0, 255, 136],
+                            "vehicle" | "plate" => [255, 170, 0],
+                            _ => [255, 59, 48],
+                        };
+                        draw_ai_bounding_box(&mut rgb_img, b.x, b.y, b.w, b.h, color);
+                    }
+                    let snap_name = format!("snap_test_{}_f{:02}.jpg", run_ts, frame_idx);
+                    let snap_full = test_dir.join(&snap_name);
+                    if rgb_img.save(&snap_full).is_ok() {
+                        rel_snap = Some(format!("ai_test/{}", snap_name));
+                        saved_previews += 1;
+                    }
+                }
+
+                if frame_boxes.is_empty() {
+                    engine.ws_hub.push_log(
+                        "INFO",
+                        "TEST",
+                        format!("Frame #{}: 0 đối tượng ({}ms)", frame_idx, inf_ms),
+                    );
+                } else {
+                    let desc: Vec<String> = frame_boxes
+                        .iter()
+                        .map(|b| format!("{} {:.0}%", b.label, b.confidence * 100.0))
+                        .collect();
+                    engine.ws_hub.push_log(
+                        "EVENT",
+                        "TEST",
+                        format!(
+                            "Frame #{}: {} đối tượng [{}] ({}ms)",
+                            frame_idx,
+                            frame_boxes.len(),
+                            desc.join(", "),
+                            inf_ms
+                        ),
+                    );
+                }
+
+                frames_out.push(AiTestFrameResult {
+                    frame_index: frame_idx,
+                    inference_ms: inf_ms,
+                    snapshot_path: rel_snap,
+                    detections: frame_boxes,
+                });
+            }
+
+            cleanup_camera_snapshots(&test_dir, 40);
+            let elapsed_ms = start_all.elapsed().as_millis() as u64;
+
+            engine.ws_hub.push_log(
+                "INFO",
+                "TEST",
+                format!(
+                    "Hoàn tất kiểm thử: {}/{} khung hình có đối tượng ({}ms) — person={}, face={}, vehicle={}, animal={}",
+                    frames_with_detections,
+                    raw_frames.len(),
+                    elapsed_ms,
+                    counts.get("person").copied().unwrap_or(0),
+                    counts.get("face").copied().unwrap_or(0),
+                    counts.get("vehicle").copied().unwrap_or(0),
+                    counts.get("animal").copied().unwrap_or(0),
+                ),
+            );
+
+            AiTestSummary {
+                total_frames: raw_frames.len(),
+                frames_with_detections,
+                elapsed_ms,
+                yolo_loaded,
+                face_loaded,
+                alpr_loaded,
+                conf_threshold: safe_conf,
+                counts,
+                frames: frames_out,
+            }
+        })
+        .await
+        .map_err(|e| format!("Lỗi luồng kiểm thử AI: {}", e))?;
+
+        Ok(summary)
     }
 
     pub fn hot_load_model(&self, model_id: &str, path: &Path) -> Result<(), String> {
@@ -261,12 +661,17 @@ impl DetectionEngine {
 
         let engine = self.clone();
         let cam_id = camera.id.clone();
-        tracing::info!("[AI DET] Started in-memory AI vision worker for {}", camera.name);
+        self.ws_hub.push_log(
+            "INFO",
+            "AI",
+            format!("Bật worker giám sát AI cho camera '{}'", camera.name),
+        );
 
         tokio::spawn(async move {
             let mut prev_gray_thumb: Option<Vec<u8>> = None;
             let mut last_event_time = Instant::now() - Duration::from_secs(60);
             let mut jpeg_api_backoff_until = Instant::now();
+            let mut logged_first_frame = false;
 
             loop {
                 let interval_ms = engine
@@ -302,6 +707,7 @@ impl DetectionEngine {
                         &mut prev_gray_thumb,
                         &mut last_event_time,
                         &mut jpeg_api_backoff_until,
+                        &mut logged_first_frame,
                     )
                     .await;
             }
@@ -402,6 +808,7 @@ impl DetectionEngine {
         prev_gray_thumb: &mut Option<Vec<u8>>,
         last_event_time: &mut Instant,
         jpeg_api_backoff_until: &mut Instant,
+        logged_first_frame: &mut bool,
     ) {
         let motion_enabled = self.db.get_setting("detection.motion_enabled", "0") == "1";
         let person_enabled = self.db.get_setting("detection.person_enabled", "1") != "0";
@@ -435,6 +842,19 @@ impl DetectionEngine {
         let Some(jpeg_bytes) = jpeg_bytes else {
             return;
         };
+
+        if !*logged_first_frame {
+            *logged_first_frame = true;
+            self.ws_hub.push_log(
+                "INFO",
+                "STREAM",
+                format!(
+                    "Đã tách khung hình đầu tiên cho '{}' ({:.1} KB) — AI đang quét",
+                    camera.name,
+                    jpeg_bytes.len() as f64 / 1024.0
+                ),
+            );
+        }
 
         // Acquire single-permit AI semaphore asynchronously so multiple cameras never
         // spike CPU/RAM simultaneously or starve Axum live stream proxies.
@@ -918,12 +1338,16 @@ impl DetectionEngine {
             "event": evt_json
         }));
 
-        tracing::info!(
-            "[AI EVENT] {} -> [{}] {} ({:.0}%)",
-            camera.name,
-            evt_type,
-            label,
-            clamped_conf * 100.0
+        self.ws_hub.push_log(
+            "EVENT",
+            "AI",
+            format!(
+                "{} -> [{}] {} ({:.0}%)",
+                camera.name,
+                evt_type,
+                label,
+                clamped_conf * 100.0
+            ),
         );
     }
 }

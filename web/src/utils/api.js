@@ -108,5 +108,15 @@ export const updateSettings = (data) => api.put('/system/settings', data).then((
 export const getAiModels = () => api.get('/system/models').then((r) => r.data);
 export const downloadAiModel = (modelId) =>
   api.post(`/system/models/${encodeURIComponent(modelId)}/download`, {}, { timeout: 300000 }).then((r) => r.data);
+export const getSystemLogs = (limit = 150) =>
+  api.get('/system/logs', { params: { limit } }).then((r) => r.data);
+export const clearSystemLogs = () => api.delete('/system/logs').then((r) => r.data);
+export const runAiVideoTest = (formData) =>
+  api
+    .post('/system/ai-test', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 180000,
+    })
+    .then((r) => r.data);
 
 export default api;

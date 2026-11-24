@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -11,7 +11,7 @@ use rusqlite::params;
 use serde_json::{json, Value};
 use sysinfo::{Disks, System};
 
-use crate::{db::allowed_settings_keys, AppState};
+use crate::{db::allowed_settings_keys, security::detect_image_type, AppState};
 
 pub async fn system_info_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut sys = System::new_all();
@@ -173,6 +173,115 @@ pub async fn download_ai_model_handler(
             }))
             .into_response()
         }
+        Err(msg) => (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response(),
+    }
+}
+
+pub async fn list_logs_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(150)
+        .clamp(1, 300);
+    Json(json!({
+        "logs": state.ws_hub.recent_logs(limit)
+    }))
+}
+
+pub async fn clear_logs_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    state.ws_hub.clear_logs();
+    state
+        .ws_hub
+        .push_log("INFO", "SYSTEM", "Đã xóa bộ đệm nhật ký hoạt động");
+    Json(json!({ "message": "Đã xóa nhật ký" }))
+}
+
+pub async fn run_ai_test_handler(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Response {
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut filename = "test_video.mp4".to_string();
+    let mut sample_fps = 1.0f32;
+    let mut max_frames = 10usize;
+    let mut conf_opt: Option<f32> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or_default().to_string();
+        if field_name == "file" {
+            if let Some(fname) = field.file_name() {
+                if !fname.trim().is_empty() {
+                    filename = fname.trim().chars().take(120).collect();
+                }
+            }
+            match field.bytes().await {
+                Ok(b) => {
+                    if b.len() > 50 * 1024 * 1024 {
+                        return (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            Json(json!({ "error": "File kiểm thử tối đa 50MB" })),
+                        )
+                            .into_response();
+                    }
+                    if !b.is_empty() {
+                        file_bytes = Some(b.to_vec());
+                    }
+                }
+                Err(_) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "Lỗi đọc file tải lên (tối đa 50MB)" })),
+                    )
+                        .into_response();
+                }
+            }
+        } else if field_name == "sample_fps" {
+            if let Ok(txt) = field.text().await {
+                if let Ok(v) = txt.trim().parse::<f32>() {
+                    sample_fps = v;
+                }
+            }
+        } else if field_name == "max_frames" {
+            if let Ok(txt) = field.text().await {
+                if let Ok(v) = txt.trim().parse::<usize>() {
+                    max_frames = v;
+                }
+            }
+        } else if field_name == "confidence_threshold" {
+            if let Ok(txt) = field.text().await {
+                if let Ok(v) = txt.trim().parse::<f32>() {
+                    conf_opt = Some(v);
+                }
+            }
+        }
+    }
+
+    let Some(bytes) = file_bytes else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Vui lòng chọn file video (.mp4/.mov/.mkv) hoặc ảnh (.jpg/.png) để kiểm thử" })),
+        )
+            .into_response();
+    };
+
+    let is_image = detect_image_type(&bytes).is_some();
+    let conf = conf_opt.unwrap_or_else(|| {
+        state
+            .db
+            .get_setting("detection.confidence_threshold", "0.35")
+            .parse::<f32>()
+            .unwrap_or(0.35)
+    });
+
+    match state
+        .detection_engine
+        .run_ai_test_media(bytes, filename, is_image, sample_fps, max_frames, conf)
+        .await
+    {
+        Ok(summary) => Json(summary).into_response(),
         Err(msg) => (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response(),
     }
 }

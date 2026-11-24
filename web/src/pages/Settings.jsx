@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   getSystemInfo,
   getSettings,
@@ -9,6 +9,10 @@ import {
   changePassword,
   getAiModels,
   downloadAiModel,
+  getSystemLogs,
+  clearSystemLogs,
+  runAiVideoTest,
+  getMediaUrl,
 } from '../utils/api';
 import { useApp } from '../App';
 import {
@@ -34,6 +38,10 @@ import {
   User,
   Link,
   MapPin,
+  Terminal,
+  Upload,
+  Play,
+  FlaskConical,
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -52,7 +60,7 @@ export default function SettingsPage() {
   const [camSaving, setCamSaving] = useState(false);
 
   // Password change state
-  const { user, onAuthUpdate, refreshGlobalStats } = useApp();
+  const { ws, user, onAuthUpdate, refreshGlobalStats } = useApp();
   const [pwdForm, setPwdForm] = useState({
     newUsername: user?.username || 'admin',
     currentPassword: '',
@@ -61,16 +69,84 @@ export default function SettingsPage() {
   });
   const [pwdSaving, setPwdSaving] = useState(false);
 
+  // AI Video Test & Real-Time Log Console state
+  const [logs, setLogs] = useState([]);
+  const [logFilter, setLogFilter] = useState('ALL');
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
+  const logEndRef = useRef(null);
+  const [testFile, setTestFile] = useState(null);
+  const [testOpts, setTestOpts] = useState({
+    sample_fps: '1',
+    max_frames: '10',
+    confidence_threshold: '0.35',
+  });
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
   const loadAll = () => {
     getSystemInfo().then(setSysInfo).catch(() => {});
     getSettings().then(setSettings).catch(() => {});
     getCameras().then(setCameras).catch(() => {});
     getAiModels().then(setAiModels).catch(() => {});
+    getSystemLogs(200)
+      .then((res) => setLogs(res?.logs || []))
+      .catch(() => {});
   };
 
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    if (!ws) return;
+    return ws.on('system_log', (payload) => {
+      if (payload?.log) {
+        setLogs((prev) => [...prev.slice(-299), payload.log]);
+      }
+    });
+  }, [ws]);
+
+  useEffect(() => {
+    if (activeTab === 'test_logs' && autoScrollLogs && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, activeTab, autoScrollLogs]);
+
+  const handleRunAiTest = async () => {
+    if (!testFile) {
+      showToast('Vui lòng chọn file video (.mp4/.mov/.mkv) hoặc ảnh (.jpg/.png) để kiểm thử', 'warning');
+      return;
+    }
+    setTestRunning(true);
+    setTestResult(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', testFile);
+      fd.append('sample_fps', String(testOpts.sample_fps || '1'));
+      fd.append('max_frames', String(testOpts.max_frames || '10'));
+      fd.append(
+        'confidence_threshold',
+        String(testOpts.confidence_threshold || settings['detection.confidence_threshold'] || '0.35')
+      );
+      const res = await runAiVideoTest(fd);
+      setTestResult(res);
+      showToast(
+        `Kiểm thử xong ${res.total_frames} khung hình: ${res.frames_with_detections} khung phát hiện đối tượng!`,
+        'success'
+      );
+    } catch (err) {
+      showToast('Lỗi kiểm thử AI: ' + (err.response?.data?.error || err.message), 'error');
+    } finally {
+      setTestRunning(false);
+    }
+  };
+
+  const handleClearLogs = async () => {
+    try {
+      await clearSystemLogs();
+      setLogs([]);
+    } catch {}
+  };
 
   const handleDownloadModel = async (modelId) => {
     setDownloadingModel((prev) => ({ ...prev, [modelId]: true }));
@@ -207,6 +283,7 @@ export default function SettingsPage() {
     { id: 'general', label: 'Kênh Camera' },
     { id: 'storage', label: 'Lưu trữ NVR' },
     { id: 'detection', label: 'Phát hiện AI' },
+    { id: 'test_logs', label: 'Kiểm thử & Log' },
     { id: 'sound', label: 'Âm thanh đêm' },
     { id: 'security', label: 'Bảo mật' },
     { id: 'system', label: 'Phần cứng' },
@@ -593,6 +670,214 @@ export default function SettingsPage() {
                   setSettings({ ...settings, 'recording.on_motion_duration': val })
                 }
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Video Test & Real-Time Log Console ── */}
+      {activeTab === 'test_logs' && (
+        <div className="flex flex-col gap-3">
+          <div className="card">
+            <div className="card-header">
+              <span className="font-bold flex items-center gap-2">
+                <FlaskConical size={16} style={{ color: 'var(--accent)' }} /> Kiểm Thử AI Bằng Video /
+                Ảnh Test (YOLOv8n + ArcFace)
+              </span>
+            </div>
+            <div className="card-body" style={{ padding: 16 }}>
+              <p className="text-xs text-muted mb-3">
+                Tải lên 1 đoạn video test (<code>.mp4</code>, <code>.mov</code>, <code>.mkv</code>,
+                tối đa 50MB) hoặc ảnh (<code>.jpg</code>, <code>.png</code>) để chạy trực tiếp qua
+                pipeline Rust AI và xem ảnh kết quả vẽ khung Bounding Box + log chi tiết từng khung hình.
+              </p>
+
+              <label className="vms-test-upload-box mb-3">
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/x-matroska,video/webm,image/jpeg,image/png,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={(e) => setTestFile(e.target.files?.[0] || null)}
+                />
+                <Upload size={18} style={{ color: 'var(--accent)' }} />
+                <span className="text-sm font-bold">
+                  {testFile
+                    ? `${testFile.name} (${(testFile.size / (1024 * 1024)).toFixed(2)} MB)`
+                    : 'Nhấn để chọn Video test (.mp4) hoặc Ảnh test (.jpg/.png)'}
+                </span>
+              </label>
+
+              <div className="vms-grid-3 mb-3">
+                <TechNumberInput
+                  label="Tốc độ tách khung (FPS)"
+                  value={testOpts.sample_fps}
+                  min={0.2}
+                  max={2}
+                  step={0.2}
+                  unit="fps"
+                  onChange={(val) => setTestOpts({ ...testOpts, sample_fps: val })}
+                />
+                <TechNumberInput
+                  label="Số khung hình tối đa"
+                  value={testOpts.max_frames}
+                  min={1}
+                  max={30}
+                  step={1}
+                  unit="khung"
+                  onChange={(val) => setTestOpts({ ...testOpts, max_frames: val })}
+                />
+                <TechNumberInput
+                  label="Ngưỡng tin cậy (Conf)"
+                  value={testOpts.confidence_threshold}
+                  min={0.15}
+                  max={0.9}
+                  step={0.05}
+                  onChange={(val) => setTestOpts({ ...testOpts, confidence_threshold: val })}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="tech-btn tech-btn-primary w-full"
+                disabled={testRunning || !testFile}
+                onClick={handleRunAiTest}
+              >
+                <Play size={14} />{' '}
+                {testRunning ? 'Đang chạy suy luận AI trên Rust...' : 'Chạy Kiểm Thử AI Ngay'}
+              </button>
+
+              {testResult && (
+                <div className="mt-4">
+                  <div className="vms-test-summary-pills mb-3">
+                    <span className="vms-osd-badge ai">
+                      Khung hình: {testResult.frames_with_detections}/{testResult.total_frames}
+                    </span>
+                    <span className="vms-osd-badge ai">
+                      Người: {testResult.counts?.person || 0}
+                    </span>
+                    <span className="vms-osd-badge ai">
+                      Khuôn mặt: {testResult.counts?.face || 0}
+                    </span>
+                    <span className="vms-osd-badge ai">
+                      Phương tiện: {testResult.counts?.vehicle || 0}
+                    </span>
+                    <span className="vms-osd-badge ai">
+                      Động vật: {testResult.counts?.animal || 0}
+                    </span>
+                    <span className="vms-osd-badge">
+                      Thời gian: {testResult.elapsed_ms} ms
+                    </span>
+                  </div>
+
+                  <div className="vms-test-frames-grid">
+                    {(testResult.frames || [])
+                      .filter((f) => f.snapshot_path)
+                      .map((f) => (
+                        <div key={f.frame_index} className="vms-test-frame-card">
+                          <a
+                            href={getMediaUrl(`snapshots/${f.snapshot_path}`)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <img
+                              src={getMediaUrl(`snapshots/${f.snapshot_path}`)}
+                              alt={`Frame ${f.frame_index}`}
+                              loading="lazy"
+                            />
+                          </a>
+                          <div className="vms-test-frame-meta">
+                            <span className="text-mono font-bold">
+                              Frame #{f.frame_index} · {f.inference_ms}ms
+                            </span>
+                            <div className="text-xs text-muted mt-1">
+                              {f.detections.length === 0
+                                ? 'Không phát hiện đối tượng'
+                                : f.detections
+                                    .map((d) => `${d.label} (${Math.round(d.confidence * 100)}%)`)
+                                    .join(', ')}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <span className="font-bold flex items-center gap-2">
+                <Terminal size={16} style={{ color: 'var(--success)' }} /> Nhật Ký AI & Hệ Thống
+                Trực Tiếp ({logs.length})
+              </span>
+              <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+                {['ALL', 'TEST', 'AI', 'YOLO', 'FACE', 'STREAM'].map((mod) => (
+                  <button
+                    key={mod}
+                    type="button"
+                    className={`vms-strip-btn ${logFilter === mod ? 'active' : ''}`}
+                    onClick={() => setLogFilter(mod)}
+                  >
+                    {mod === 'ALL' ? 'Tất cả' : mod}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`vms-strip-btn ${autoScrollLogs ? 'active' : ''}`}
+                  onClick={() => setAutoScrollLogs((p) => !p)}
+                >
+                  Tự cuộn
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    getSystemLogs(200)
+                      .then((res) => setLogs(res?.logs || []))
+                      .catch(() => {})
+                  }
+                >
+                  <RefreshCw size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm"
+                  onClick={handleClearLogs}
+                  title="Xóa log"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+            <div className="card-body" style={{ padding: 10 }}>
+              <div className="vms-log-console custom-scrollbar">
+                {logs.filter((l) => logFilter === 'ALL' || l.module === logFilter).length === 0 ? (
+                  <div className="text-xs text-muted text-mono" style={{ padding: 16 }}>
+                    Chưa có dòng log nào cho bộ lọc này. Hãy chạy kiểm thử hoặc bật AI trên camera...
+                  </div>
+                ) : (
+                  logs
+                    .filter((l) => logFilter === 'ALL' || l.module === logFilter)
+                    .map((entry) => {
+                      const t = entry.timestamp
+                        ? new Date(entry.timestamp).toLocaleTimeString('vi-VN', { hour12: false })
+                        : '';
+                      return (
+                        <div
+                          key={entry.id}
+                          className={`vms-log-line level-${(entry.level || 'INFO').toLowerCase()}`}
+                        >
+                          <span className="log-ts">{t}</span>
+                          <span className="log-lvl">[{entry.level}]</span>
+                          <span className="log-mod">[{entry.module}]</span>
+                          <span className="log-msg">{entry.message}</span>
+                        </div>
+                      );
+                    })
+                )}
+                <div ref={logEndRef} />
+              </div>
             </div>
           </div>
         </div>

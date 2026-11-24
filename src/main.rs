@@ -257,6 +257,15 @@ async fn main() {
             "/api/system/models/:model_id/download",
             post(routes::system::download_ai_model_handler),
         )
+        .route(
+            "/api/system/logs",
+            get(routes::system::list_logs_handler).delete(routes::system::clear_logs_handler),
+        )
+        .route(
+            "/api/system/ai-test",
+            post(routes::system::run_ai_test_handler)
+                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
         // Protected Snapshot Media Files
         .route("/media/snapshots/*rel_path", get(serve_protected_snapshot))
         .route_layer(middleware::from_fn_with_state(
