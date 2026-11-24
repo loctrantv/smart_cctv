@@ -80,6 +80,11 @@ impl FaceEngine {
                     .map_err(|e| format!("Failed to read Face ONNX model: {}", e))?
                     .with_input_fact(0, f32::fact([1, 3, 112, 112]).into())
                     .map_err(|e| format!("Failed to set 112x112 face input shape: {}", e))?
+                    .into_typed()
+                    .map_err(|e| {
+                        tracing::error!("[AI Face] Failed to type Face ONNX graph: {}", e);
+                        format!("Failed to type Face ONNX graph: {}", e)
+                    })?
                     .into_decluttered()
                     .map_err(|e| {
                         tracing::error!("[AI Face] Failed to declutter Face ONNX graph: {}", e);

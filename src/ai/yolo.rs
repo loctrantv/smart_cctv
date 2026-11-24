@@ -79,6 +79,11 @@ impl YoloDetector {
                     })?
                     .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
                     .map_err(|e| format!("Failed to set input shape: {}", e))?
+                    .into_typed()
+                    .map_err(|e| {
+                        tracing::error!("[AI YOLO] Failed to type ONNX graph: {}", e);
+                        format!("Failed to type ONNX graph: {}", e)
+                    })?
                     .into_decluttered()
                     .map_err(|e| {
                         tracing::error!("[AI YOLO] Failed to declutter ONNX graph: {}", e);

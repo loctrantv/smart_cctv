@@ -58,6 +58,8 @@ impl AlprEngine {
                     .map_err(|e| format!("Failed to read ALPR ONNX model: {}", e))?
                     .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
                     .map_err(|e| format!("Failed to set ALPR input shape: {}", e))?
+                    .into_typed()
+                    .map_err(|e| format!("Failed to type ALPR graph: {}", e))?
                     .into_decluttered()
                     .map_err(|e| format!("Failed to declutter ALPR graph: {}", e))?
             }
