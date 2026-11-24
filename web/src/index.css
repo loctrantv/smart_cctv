@@ -2571,6 +2571,7 @@ a {
   background: #000;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 3px;
+  container-type: size;
 }
 
 /* Mode 3 & 4: Single Lens Stage (Top 16:9 or Bottom 16:9) */
@@ -2583,26 +2584,21 @@ a {
   justify-content: center;
   overflow: hidden;
   background: #000;
+  container-type: size;
 }
 
-/* 16:9 Precision Crop Box for Dual-Lens 8:9 Stream
-   Because the raw stream is two 16:9 frames stacked vertically (total height = 2x single 16:9 frame),
-   setting the crop box to aspect-ratio 16/9 and the inner video to height: 200%
-   cleanly isolates either the top 50% (top: 0) or bottom 50% (top: -100%) without distortion! */
+/* 16:9 Precision Crop Box for Dual-Lens Stream (both Vertical 8:9 and Horizontal 32:9) */
 .vms-crop-box {
   position: relative;
-  width: 100%;
-  max-height: 100%;
-  aspect-ratio: 16 / 9;
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  height: min(100cqh, calc(100cqw * 9 / 16));
   overflow: hidden;
   background: #000;
+  flex-shrink: 0;
 }
 
 .vms-crop-box video {
   position: absolute;
-  left: 0;
-  width: 100% !important;
-  height: 200% !important;
   max-width: none !important;
   max-height: none !important;
   object-fit: fill !important;
@@ -2610,11 +2606,31 @@ a {
 }
 
 .vms-crop-box.crop-top video {
+  left: 0;
   top: 0;
+  width: 100% !important;
+  height: 200% !important;
 }
 
 .vms-crop-box.crop-bottom video {
+  left: 0;
   top: -100%;
+  width: 100% !important;
+  height: 200% !important;
+}
+
+.vms-crop-box.crop-left video {
+  top: 0;
+  left: 0;
+  width: 200% !important;
+  height: 100% !important;
+}
+
+.vms-crop-box.crop-right video {
+  top: 0;
+  left: -100%;
+  width: 200% !important;
+  height: 100% !important;
 }
 
 .vms-lens-tag {
@@ -4853,8 +4869,21 @@ a {
 
   .vms-strip-btn {
     height: 30px;
-    padding: 0 10px;
-    font-size: 0.74rem;
+    padding: 0 9px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .vms-btn-group {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+
+  .vms-btn-group::-webkit-scrollbar {
+    display: none;
   }
 
   /* 4. Live Matrix & Dual-Lens Video Cards on Mobile */
@@ -4887,7 +4916,7 @@ a {
 
   .vms-matrix-cell {
     border-radius: 10px;
-    min-height: 260px;
+    min-height: 220px;
     box-shadow: var(--shadow-md);
   }
 
@@ -4913,12 +4942,33 @@ a {
   .vms-split-pane {
     aspect-ratio: 16 / 9;
     height: auto;
+    min-height: 180px;
+    container-type: normal;
+  }
+
+  .vms-single-lens-stage {
+    width: 100%;
+    height: 100%;
+    min-height: 190px;
+    container-type: normal;
+  }
+
+  .vms-crop-box {
+    width: 100%;
+    height: 100%;
   }
 
   /* Larger Touch Targets for Camera Cell Actions & Player HUD */
   .vms-cell-osd-top {
     max-width: calc(100% - 118px);
     padding: 4px 8px;
+    overflow: hidden;
+  }
+
+  .vms-cam-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .vms-cell-actions {
@@ -4950,28 +5000,47 @@ a {
     right: 6px;
     bottom: 6px;
     justify-content: space-between;
+    gap: 4px;
     overflow-x: auto;
     scrollbar-width: none;
+    flex-wrap: nowrap;
   }
 
   .vms-player-hud-bar::-webkit-scrollbar {
     display: none;
   }
 
+  .vms-lens-switcher,
+  .vms-media-tools {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+
   .vms-hud-btn {
     height: 28px;
-    padding: 0 8px;
-    font-size: 0.7rem;
+    padding: 0 7px;
+    font-size: 0.68rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .vms-hud-btn span {
+    white-space: nowrap;
   }
 
   .vms-hud-icon-btn {
     width: 28px;
     height: 28px;
+    flex-shrink: 0;
   }
 
   .vms-lens-tag {
     bottom: 40px;
     font-size: 0.6rem;
+    white-space: nowrap;
+    max-width: calc(100% - 16px);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* 5. Mobile Bottom Sheet for Live Event Drawer */

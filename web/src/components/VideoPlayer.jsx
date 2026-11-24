@@ -45,6 +45,7 @@ export default function VideoPlayer({
   const videoRef = useRef(null);
   const secondaryVideoRef = useRef(null);
   const pcRef = useRef(null);
+  const hlsRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const firstFrameReceivedRef = useRef(false);
 
@@ -55,7 +56,12 @@ export default function VideoPlayer({
   const [connected, setConnected] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [isMuted, setIsMuted] = useState(initialMuted);
-  const [videoMeta, setVideoMeta] = useState({ width: 0, height: 0, isDualLens: true });
+  const [videoMeta, setVideoMeta] = useState({
+    width: 0,
+    height: 0,
+    isDualLens: true,
+    dualOrientation: 'vertical', // 'vertical' (8:9) | 'horizontal' (32:9)
+  });
   const [showAiBoxes, setShowAiBoxes] = useState(true);
   const [liveBoxes, setLiveBoxes] = useState([]);
 
@@ -131,24 +137,69 @@ export default function VideoPlayer({
     setIsMuted(initialMuted);
   }, [initialMuted]);
 
-  const syncSecondaryVideo = useCallback(() => {
-    if (activeLensMode !== 'split' || !secondaryVideoRef.current || !videoRef.current) return;
+  // Re-attach live WebRTC MediaStream or HLS instance whenever lensMode remounts <video> elements
+  const syncVideos = useCallback(() => {
+    const primary = videoRef.current;
+    const secondary = secondaryVideoRef.current;
+
     if (mediaStreamRef.current) {
-      if (secondaryVideoRef.current.srcObject !== mediaStreamRef.current) {
-        secondaryVideoRef.current.srcObject = mediaStreamRef.current;
-        secondaryVideoRef.current.play().catch(() => {});
+      if (primary && primary.srcObject !== mediaStreamRef.current) {
+        primary.srcObject = mediaStreamRef.current;
+        primary.play().catch(() => {});
       }
-    } else if (videoRef.current.currentSrc) {
-      if (secondaryVideoRef.current.src !== videoRef.current.currentSrc) {
-        secondaryVideoRef.current.src = videoRef.current.currentSrc;
-        secondaryVideoRef.current.play().catch(() => {});
+      if (activeLensMode === 'split' && secondary && secondary.srcObject !== mediaStreamRef.current) {
+        secondary.srcObject = mediaStreamRef.current;
+        secondary.play().catch(() => {});
+      }
+      return;
+    }
+
+    // HLS mode: re-attach hls.js instance to the newly mounted primary <video>
+    if (hlsRef.current && primary) {
+      if (hlsRef.current.media !== primary) {
+        try {
+          hlsRef.current.detachMedia();
+          hlsRef.current.attachMedia(primary);
+          primary.play().catch(() => {});
+        } catch {}
+      }
+      if (activeLensMode === 'split' && secondary) {
+        try {
+          const captured =
+            typeof primary.captureStream === 'function'
+              ? primary.captureStream()
+              : typeof primary.mozCaptureStream === 'function'
+              ? primary.mozCaptureStream()
+              : null;
+          if (captured && secondary.srcObject !== captured) {
+            secondary.srcObject = captured;
+            secondary.play().catch(() => {});
+          }
+        } catch {}
+      }
+      return;
+    }
+
+    // Native Safari HLS fallback
+    if (mode === 'hls' && hlsStreamPath && primary) {
+      const hlsUrl = resolveStreamUrl(hlsStreamPath);
+      if (!primary.src) {
+        primary.src = hlsUrl;
+        primary.play().catch(() => {});
+      }
+      if (activeLensMode === 'split' && secondary && !secondary.src) {
+        secondary.src = hlsUrl;
+        secondary.play().catch(() => {});
       }
     }
-  }, [activeLensMode]);
+  }, [activeLensMode, mode, hlsStreamPath]);
 
   useEffect(() => {
-    syncSecondaryVideo();
-  }, [activeLensMode, connected, syncSecondaryVideo]);
+    syncVideos();
+    // Schedule one more sync tick after HLS media attaches so captureStream() has active tracks
+    const t = setTimeout(syncVideos, 250);
+    return () => clearTimeout(t);
+  }, [activeLensMode, connected, syncVideos]);
 
   const handleLoadedMetadata = (e) => {
     const video = e.target;
@@ -156,18 +207,20 @@ export default function VideoPlayer({
       firstFrameReceivedRef.current = true;
       setConnected(true);
       const ratio = video.videoWidth / video.videoHeight;
-      // Dual-lens cameras stack two 16:9 frames vertically -> ratio ~ 0.888 (8:9) or < 1.15
-      const isDual = ratio < 1.15;
+      // Dual-lens cameras stack two 16:9 frames vertically (ratio < 1.15) or horizontally (ratio > 2.6)
+      const isHorizontalDual = ratio > 2.6;
+      const isVerticalDual = ratio < 1.15;
       setVideoMeta({
         width: video.videoWidth,
         height: video.videoHeight,
-        isDualLens: isDual,
+        isDualLens: isVerticalDual || isHorizontalDual,
+        dualOrientation: isHorizontalDual ? 'horizontal' : 'vertical',
       });
       if (onAspectRatioChange) {
         onAspectRatioChange(ratio);
       }
     }
-    syncSecondaryVideo();
+    syncVideos();
   };
 
   useEffect(() => {
@@ -323,9 +376,12 @@ export default function VideoPlayer({
             }
           },
         });
+        hlsRef.current = hls;
 
         hls.loadSource(hlsUrl);
-        hls.attachMedia(videoRef.current);
+        if (videoRef.current) {
+          hls.attachMedia(videoRef.current);
+        }
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (autoPlay && videoRef.current) videoRef.current.play().catch(() => {});
@@ -338,7 +394,10 @@ export default function VideoPlayer({
           }
         });
 
-        return () => hls.destroy();
+        return () => {
+          if (hlsRef.current === hls) hlsRef.current = null;
+          hls.destroy();
+        };
       } catch (err) {
         console.error('[VideoPlayer] HLS failed:', err.message);
         if (!cancelled) setMode('error');
@@ -590,10 +649,14 @@ export default function VideoPlayer({
           className="vms-dual-split-grid"
           style={{ transform: zoomTransform, transformOrigin: 'center center' }}
         >
-          {/* Left Pane: Top Lens (0% - 50% Y) */}
+          {/* Left Pane: Lens 1 (Top 0-50% Y or Left 0-50% X) */}
           <div className="vms-split-pane">
-            <span className="vms-lens-tag">MẮT 1 (TRÊN - CỐ ĐỊNH)</span>
-            <div className="vms-crop-box crop-top">
+            <span className="vms-lens-tag">MẮT 1</span>
+            <div
+              className={`vms-crop-box ${
+                videoMeta.dualOrientation === 'horizontal' ? 'crop-left' : 'crop-top'
+              }`}
+            >
               <video
                 ref={videoRef}
                 autoPlay={autoPlay}
@@ -605,10 +668,14 @@ export default function VideoPlayer({
             </div>
           </div>
 
-          {/* Right Pane: Bottom Lens (50% - 100% Y) */}
+          {/* Right Pane: Lens 2 (Bottom 50-100% Y or Right 50-100% X) */}
           <div className="vms-split-pane">
-            <span className="vms-lens-tag">MẮT 2 (DƯỚI - PTZ)</span>
-            <div className="vms-crop-box crop-bottom">
+            <span className="vms-lens-tag">MẮT 2</span>
+            <div
+              className={`vms-crop-box ${
+                videoMeta.dualOrientation === 'horizontal' ? 'crop-right' : 'crop-bottom'
+              }`}
+            >
               <video
                 ref={secondaryVideoRef}
                 autoPlay={autoPlay}
@@ -625,9 +692,19 @@ export default function VideoPlayer({
           style={{ transform: zoomTransform, transformOrigin: 'center center' }}
         >
           <span className="vms-lens-tag">
-            {activeLensMode === 'top' ? 'MẮT 1 (KHUNG TRÊN 16:9)' : 'MẮT 2 (KHUNG DƯỚI 16:9)'}
+            {activeLensMode === 'top' ? 'MẮT 1 (16:9)' : 'MẮT 2 (16:9)'}
           </span>
-          <div className={`vms-crop-box ${activeLensMode === 'top' ? 'crop-top' : 'crop-bottom'}`}>
+          <div
+            className={`vms-crop-box ${
+              videoMeta.dualOrientation === 'horizontal'
+                ? activeLensMode === 'top'
+                  ? 'crop-left'
+                  : 'crop-right'
+                : activeLensMode === 'top'
+                ? 'crop-top'
+                : 'crop-bottom'
+            }`}
+          >
             <video
               ref={videoRef}
               autoPlay={autoPlay}
