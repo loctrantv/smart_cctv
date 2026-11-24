@@ -7,6 +7,7 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronLeft,
@@ -210,6 +211,31 @@ export function TechDialogProvider({ children }) {
   );
 }
 
+// Helper: Compute viewport-clamped fixed coordinates so popovers never get clipped by overflow:auto parents
+function computePopoverStyle(triggerEl, minWidth = 200, estHeight = 260) {
+  if (!triggerEl) return { position: 'fixed', top: 64, left: 12, minWidth, zIndex: 9999 };
+  const rect = triggerEl.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const width = Math.min(Math.max(rect.width, minWidth), vw - 16);
+  const left = Math.max(8, Math.min(rect.left, vw - width - 8));
+  const spaceBelow = vh - rect.bottom - 12;
+  const openAbove = spaceBelow < estHeight && rect.top > spaceBelow;
+  const top = openAbove
+    ? Math.max(8, rect.top - Math.min(estHeight, rect.top - 12) - 6)
+    : rect.bottom + 6;
+  return {
+    position: 'fixed',
+    top,
+    left,
+    right: 'auto',
+    bottom: 'auto',
+    width,
+    maxWidth: vw - 16,
+    zIndex: 9999,
+  };
+}
+
 // ============================================================
 // 2. TECH SELECT (Custom Dropdown replacing native <select>)
 // ============================================================
@@ -225,18 +251,37 @@ export function TechSelect({
   style = {},
 }) {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
   const wrapRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const updatePos = useCallback(() => {
+    setMenuStyle(computePopoverStyle(wrapRef.current, 190, 260));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    updatePos();
     const onDocClick = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+      if (
+        wrapRef.current &&
+        !wrapRef.current.contains(e.target) &&
+        (!menuRef.current || !menuRef.current.contains(e.target))
+      ) {
         setOpen(false);
       }
     };
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
+    document.addEventListener('touchstart', onDocClick);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('touchstart', onDocClick);
+    };
+  }, [open, updatePos]);
 
   const selectedOpt = options.find((o) => String(o.value) === String(value));
 
@@ -260,27 +305,33 @@ export function TechSelect({
         <ChevronDown size={14} className={`tech-select-arrow ${open ? 'rotated' : ''}`} />
       </button>
 
-      {open && (
-        <div className="tech-select-menu custom-scrollbar">
-          {options.map((opt) => {
-            const isSelected = String(opt.value) === String(value);
-            return (
-              <button
-                key={String(opt.value)}
-                type="button"
-                className={`tech-select-option ${isSelected ? 'selected' : ''}`}
-                onClick={() => {
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="truncate">{opt.label}</span>
-                {isSelected && <Check size={13} className="tech-select-check" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="tech-select-menu custom-scrollbar"
+            style={menuStyle}
+          >
+            {options.map((opt) => {
+              const isSelected = String(opt.value) === String(value);
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  className={`tech-select-option ${isSelected ? 'selected' : ''}`}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {isSelected && <Check size={13} className="tech-select-check" />}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
@@ -297,7 +348,9 @@ export function TechDatePicker({
   size = 'md',
 }) {
   const [open, setOpen] = useState(false);
+  const [popStyle, setPopStyle] = useState({});
   const wrapRef = useRef(null);
+  const popRef = useRef(null);
 
   const parsedDate = useMemo(() => {
     if (!value) return null;
@@ -311,16 +364,33 @@ export function TechDatePicker({
     if (parsedDate) setViewMonth(parsedDate);
   }, [parsedDate]);
 
+  const updatePos = useCallback(() => {
+    setPopStyle(computePopoverStyle(wrapRef.current, 276, 315));
+  }, []);
+
   useEffect(() => {
     if (!open) return;
+    updatePos();
     const onDocClick = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+      if (
+        wrapRef.current &&
+        !wrapRef.current.contains(e.target) &&
+        (!popRef.current || !popRef.current.contains(e.target))
+      ) {
         setOpen(false);
       }
     };
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
+    document.addEventListener('touchstart', onDocClick);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('touchstart', onDocClick);
+    };
+  }, [open, updatePos]);
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 1 });
@@ -357,87 +427,89 @@ export function TechDatePicker({
         )}
       </button>
 
-      {open && (
-        <div className="tech-calendar-popover">
-          <div className="tech-calendar-header">
-            <button
-              type="button"
-              className="tech-cal-nav-btn"
-              onClick={() => setViewMonth((m) => subMonths(m, 1))}
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <span className="tech-cal-title text-mono">
-              THÁNG {format(viewMonth, 'MM / yyyy')}
-            </span>
-            <button
-              type="button"
-              className="tech-cal-nav-btn"
-              onClick={() => setViewMonth((m) => addMonths(m, 1))}
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
-
-          <div className="tech-calendar-weekdays">
-            {weekDays.map((w) => (
-              <span key={w} className="tech-cal-weekday text-mono">
-                {w}
+      {open &&
+        createPortal(
+          <div ref={popRef} className="tech-calendar-popover" style={popStyle}>
+            <div className="tech-calendar-header">
+              <button
+                type="button"
+                className="tech-cal-nav-btn"
+                onClick={() => setViewMonth((m) => subMonths(m, 1))}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="tech-cal-title text-mono">
+                THÁNG {format(viewMonth, 'MM / yyyy')}
               </span>
-            ))}
-          </div>
+              <button
+                type="button"
+                className="tech-cal-nav-btn"
+                onClick={() => setViewMonth((m) => addMonths(m, 1))}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
 
-          <div className="tech-calendar-grid">
-            {days.map((day) => {
-              const inMonth = isSameMonth(day, viewMonth);
-              const isSelected = parsedDate && isSameDay(day, parsedDate);
-              const isToday = isSameDay(day, new Date());
+            <div className="tech-calendar-weekdays">
+              {weekDays.map((w) => (
+                <span key={w} className="tech-cal-weekday text-mono">
+                  {w}
+                </span>
+              ))}
+            </div>
 
-              return (
-                <button
-                  key={day.toISOString()}
-                  type="button"
-                  className={`tech-cal-day text-mono ${!inMonth ? 'muted' : ''} ${
-                    isSelected ? 'selected' : ''
-                  } ${isToday ? 'today' : ''}`}
-                  onClick={() => {
-                    onChange(format(day, 'yyyy-MM-dd'));
-                    setOpen(false);
-                  }}
-                >
-                  {format(day, 'd')}
-                </button>
-              );
-            })}
-          </div>
+            <div className="tech-calendar-grid">
+              {days.map((day) => {
+                const inMonth = isSameMonth(day, viewMonth);
+                const isSelected = parsedDate && isSameDay(day, parsedDate);
+                const isToday = isSameDay(day, new Date());
 
-          <div className="tech-calendar-footer">
-            <button
-              type="button"
-              className="tech-cal-quick-btn"
-              onClick={() => {
-                const todayStr = format(new Date(), 'yyyy-MM-dd');
-                onChange(todayStr);
-                setOpen(false);
-              }}
-            >
-              Hôm nay
-            </button>
-            {allowClear && (
+                return (
+                  <button
+                    key={day.toISOString()}
+                    type="button"
+                    className={`tech-cal-day text-mono ${!inMonth ? 'muted' : ''} ${
+                      isSelected ? 'selected' : ''
+                    } ${isToday ? 'today' : ''}`}
+                    onClick={() => {
+                      onChange(format(day, 'yyyy-MM-dd'));
+                      setOpen(false);
+                    }}
+                  >
+                    {format(day, 'd')}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="tech-calendar-footer">
               <button
                 type="button"
                 className="tech-cal-quick-btn"
                 onClick={() => {
-                  onChange('');
+                  const todayStr = format(new Date(), 'yyyy-MM-dd');
+                  onChange(todayStr);
                   setOpen(false);
                 }}
               >
-                Tất cả ngày
+                Hôm nay
               </button>
-            )}
-          </div>
-        </div>
-      )}
+              {allowClear && (
+                <button
+                  type="button"
+                  className="tech-cal-quick-btn"
+                  onClick={() => {
+                    onChange('');
+                    setOpen(false);
+                  }}
+                >
+                  Tất cả ngày
+                </button>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

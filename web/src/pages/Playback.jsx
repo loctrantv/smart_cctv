@@ -199,12 +199,21 @@ export default function Playback() {
   useEffect(() => {
     getCameras().then((data) => {
       setCameras(data);
-      if (data.length > 0) setSelectedCamera(data[0]);
+      if (data.length > 0) {
+        const urlCamId = new URLSearchParams(window.location.search).get('camera_id');
+        const savedCamId = localStorage.getItem('smart_cctv_last_camera_id');
+        const preferred =
+          (urlCamId && data.find((c) => String(c.id) === String(urlCamId))) ||
+          (savedCamId && data.find((c) => String(c.id) === String(savedCamId))) ||
+          data[0];
+        setSelectedCamera(preferred);
+      }
     });
   }, []);
 
   useEffect(() => {
     if (!selectedCamera) return;
+    localStorage.setItem('smart_cctv_last_camera_id', String(selectedCamera.id));
     setVisibleCount(30);
     getTimeline(selectedCamera.id, selectedDate)
       .then(setTimeline)

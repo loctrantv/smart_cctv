@@ -346,7 +346,10 @@ export default function CameraView() {
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={() => navigate('/playback')}
+            onClick={() => {
+              localStorage.setItem('smart_cctv_last_camera_id', String(camera.id));
+              navigate(`/playback?camera_id=${encodeURIComponent(camera.id)}`);
+            }}
           >
             <PlayCircle size={14} /> Xem lại
           </button>

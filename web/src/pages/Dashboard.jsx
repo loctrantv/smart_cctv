@@ -68,6 +68,7 @@ export default function Dashboard() {
   const [showEventDrawer, setShowEventDrawer] = useState(false);
   const [recentEvents, setRecentEvents] = useState([]);
   const [alertMap, setAlertMap] = useState({}); // cameraId -> timestamp of latest motion/sound alert
+  const [cellHudVisible, setCellHudVisible] = useState({}); // cameraId -> boolean
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState({});
 
@@ -379,13 +380,14 @@ export default function Dashboard() {
               {visibleCameras.map((camera, idx) => {
                 const isAlerting = Boolean(alertMap[camera.id]);
                 const effectiveLens = getEffectiveLensMode(camera.id);
+                const isHudVisible = cellHudVisible[camera.id] !== false || isAlerting;
 
                 return (
                   <div
                     key={camera.id}
                     className={`vms-matrix-cell ${camera.record_enabled ? 'is-recording' : ''} ${
                       isAlerting ? 'is-alerting' : ''
-                    }`}
+                    } ${isHudVisible ? 'hud-visible' : 'hud-hidden'}`}
                     onDoubleClick={() => navigate(`/camera/${camera.id}`)}
                     id={`camera-cell-${camera.id}`}
                   >
@@ -463,6 +465,11 @@ export default function Dashboard() {
                       lensMode={effectiveLens}
                       onLensModeChange={(nextMode) =>
                         setCellLensModes((prev) => ({ ...prev, [camera.id]: nextMode }))
+                      }
+                      onHudVisibilityChange={(vis) =>
+                        setCellHudVisible((prev) =>
+                          prev[camera.id] === vis ? prev : { ...prev, [camera.id]: vis }
+                        )
                       }
                     />
                   </div>

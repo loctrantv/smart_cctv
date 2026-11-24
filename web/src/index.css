@@ -5080,16 +5080,52 @@ a {
   .vms-workstation-body {
     flex-direction: column;
     overflow: visible;
+    gap: 10px;
   }
 
   .vms-workstation-stage {
-    min-height: 240px;
+    flex: none;
+    width: 100%;
+    height: auto;
+    min-height: 0;
     padding: 4px;
     border-radius: 10px;
+    overflow: visible;
+    display: block;
+  }
+
+  .vms-stage-frame {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+    overflow: hidden;
   }
 
   .vms-stage-frame.zone-drawing-locked,
   .vms-stage-frame.mode-stacked {
+    width: 100%;
+    height: auto;
+    max-height: 68dvh;
+    margin: 0 auto;
+  }
+
+  .vms-stage-frame.zone-drawing-locked .vms-player-root,
+  .vms-stage-frame.mode-stacked .vms-player-root {
+    width: 100%;
+    height: 100%;
+    max-height: 68dvh;
+    aspect-ratio: 8 / 9;
+  }
+
+  .vms-stage-frame.mode-top .vms-player-root,
+  .vms-stage-frame.mode-bottom .vms-player-root {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .vms-stage-frame.mode-split .vms-player-root {
     width: 100%;
     height: auto;
   }
@@ -5470,6 +5506,60 @@ textarea {
   padding: 12px 14px;
 }
 
+/* Pro Auto-Hide Video OSD & HUD Overlays (10s inactivity fade, instant reveal on hover/click/tap) */
+.vms-cell-osd-top,
+.vms-cell-actions,
+.vms-player-hud-bar,
+.vms-osd-tech,
+.vms-lens-tag {
+  transition: opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.vms-matrix-cell.hud-visible .vms-cell-osd-top,
+.vms-matrix-cell.hud-visible .vms-cell-actions,
+.vms-matrix-cell.is-alerting .vms-cell-osd-top {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.vms-matrix-cell.hud-visible .vms-cell-actions {
+  pointer-events: auto;
+}
+
+.vms-matrix-cell.hud-hidden .vms-cell-osd-top,
+.vms-matrix-cell.hud-hidden .vms-cell-actions {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+.vms-player-root.hud-visible .vms-player-hud-bar,
+.vms-player-root.hud-visible .vms-osd-tech,
+.vms-player-root.hud-visible .vms-lens-tag {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.vms-player-root.hud-hidden .vms-player-hud-bar,
+.vms-player-root.hud-hidden .vms-osd-tech,
+.vms-player-root.hud-hidden .vms-lens-tag {
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none !important;
+}
+
+@media (max-width: 768px) {
+  .vms-matrix-cell.hud-hidden .vms-cell-actions,
+  .vms-player-root.hud-hidden .vms-player-hud-bar,
+  .vms-player-root.hud-hidden .vms-osd-tech,
+  .vms-player-root.hud-hidden .vms-lens-tag {
+    opacity: 0;
+    pointer-events: none !important;
+  }
+}
+
+/* Full-width Settings & Cleanup Strip */
 .vms-settings-shell {
   width: 100%;
   max-width: none;

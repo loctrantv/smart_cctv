@@ -40,6 +40,8 @@ export default function VideoPlayer({
   showControls = true,
   lockStacked = false, // Used when drawing AI detection zones on raw 8:9 coordinates
   onAspectRatioChange,
+  onHudVisibilityChange,
+  autoHideMs = 10000,
 }) {
   const { ws } = useApp() || {};
   const videoRef = useRef(null);
@@ -64,6 +66,39 @@ export default function VideoPlayer({
   });
   const [showAiBoxes, setShowAiBoxes] = useState(true);
   const [liveBoxes, setLiveBoxes] = useState([]);
+  const [hudVisible, setHudVisible] = useState(true);
+  const hudTimerRef = useRef(null);
+  const lastMoveRef = useRef(0);
+  const onHudVisibilityChangeRef = useRef(onHudVisibilityChange);
+  onHudVisibilityChangeRef.current = onHudVisibilityChange;
+
+  const revealHud = useCallback(() => {
+    setHudVisible(true);
+    if (onHudVisibilityChangeRef.current) onHudVisibilityChangeRef.current(true);
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    if (autoHideMs > 0) {
+      hudTimerRef.current = setTimeout(() => {
+        setHudVisible(false);
+        if (onHudVisibilityChangeRef.current) onHudVisibilityChangeRef.current(false);
+      }, autoHideMs);
+    }
+  }, [autoHideMs]);
+
+  useEffect(() => {
+    revealHud();
+    return () => {
+      if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    };
+  }, [revealHud]);
+
+  const handleRootMouseMove = (e) => {
+    handlePanMouseMove(e);
+    const now = Date.now();
+    if (now - lastMoveRef.current > 400 || !hudVisible) {
+      lastMoveRef.current = now;
+      revealHud();
+    }
+  };
 
   // Subscribe to real-time WebSocket AI bounding boxes (`ai_detections` and `detection_event`)
   useEffect(() => {
@@ -612,10 +647,15 @@ export default function VideoPlayer({
 
   return (
     <div
-      className={`vms-player-root lens-mode-${activeLensMode} ${zoom > 1 ? 'is-zoomed' : ''}`}
+      className={`vms-player-root lens-mode-${activeLensMode} ${zoom > 1 ? 'is-zoomed' : ''} ${
+        hudVisible ? 'hud-visible' : 'hud-hidden'
+      }`}
       onWheel={handleWheelZoom}
+      onMouseEnter={revealHud}
+      onMouseMove={handleRootMouseMove}
+      onClick={revealHud}
+      onTouchStart={revealHud}
       onMouseDown={handlePanMouseDown}
-      onMouseMove={handlePanMouseMove}
       onMouseUp={handlePanMouseUp}
       onMouseLeave={handlePanMouseUp}
     >
