@@ -1,5 +1,8 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use image::{imageops::FilterType, DynamicImage, GenericImageView, RgbImage};
 use serde::{Deserialize, Serialize};
@@ -26,21 +29,26 @@ pub struct DetectedObject {
 #[derive(Clone)]
 pub struct YoloDetector {
     session: Arc<Mutex<Option<OnnxModel>>>,
+    logged_shape: Arc<AtomicBool>,
 }
 
 impl YoloDetector {
     pub fn new() -> Self {
         Self {
             session: Arc::new(Mutex::new(None)),
+            logged_shape: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.session.lock().unwrap().is_some()
+        self.session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     pub fn load_from_file(&self, model_path: &Path) -> Result<(), String> {
-        let model = tract_onnx::onnx()
+        let typed = match tract_onnx::onnx()
             .model_for_path(model_path)
             .map_err(|e| {
                 tracing::error!("[AI YOLO] Failed to read ONNX model {:?}: {}", model_path, e);
@@ -52,19 +60,45 @@ impl YoloDetector {
                 format!("Failed to set input shape: {}", e)
             })?
             .into_optimized()
-            .map_err(|e| {
-                tracing::error!("[AI YOLO] Failed to optimize ONNX graph: {}", e);
-                format!("Failed to optimize ONNX graph: {}", e)
-            })?
-            .into_runnable()
-            .map_err(|e| {
-                tracing::error!("[AI YOLO] Failed to compile runnable plan: {}", e);
-                format!("Failed to compile runnable plan: {}", e)
-            })?;
+        {
+            Ok(m) => m,
+            Err(opt_err) => {
+                tracing::warn!(
+                    "[AI YOLO] into_optimized() failed ({}), falling back to into_decluttered()",
+                    opt_err
+                );
+                tract_onnx::onnx()
+                    .model_for_path(model_path)
+                    .map_err(|e| {
+                        tracing::error!(
+                            "[AI YOLO] Fallback read failed for {:?}: {}",
+                            model_path,
+                            e
+                        );
+                        format!("Failed to read ONNX model: {}", e)
+                    })?
+                    .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
+                    .map_err(|e| format!("Failed to set input shape: {}", e))?
+                    .into_decluttered()
+                    .map_err(|e| {
+                        tracing::error!("[AI YOLO] Failed to declutter ONNX graph: {}", e);
+                        format!("Failed to declutter ONNX graph: {}", e)
+                    })?
+            }
+        };
 
-        let mut guard = self.session.lock().unwrap();
+        let model = typed.into_runnable().map_err(|e| {
+            tracing::error!("[AI YOLO] Failed to compile runnable plan: {}", e);
+            format!("Failed to compile runnable plan: {}", e)
+        })?;
+
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(model);
-        tracing::info!("[AI YOLO] Successfully loaded & compiled YOLOv8n ONNX model from {:?}", model_path);
+        self.logged_shape.store(false, Ordering::Relaxed);
+        tracing::info!(
+            "[AI YOLO] Successfully loaded & compiled YOLOv8n ONNX model from {:?}",
+            model_path
+        );
         Ok(())
     }
 
@@ -134,18 +168,26 @@ impl YoloDetector {
         };
 
         let output_tensor = {
-            let guard = self.session.lock().unwrap();
+            let guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
             let Some(plan) = guard.as_ref() else {
                 return Vec::new();
             };
-            let Ok(mut result) = plan.run(tvec!(tensor.into_tensor().into())) else {
-                return Vec::new();
+            let mut result = match plan.run(tvec!(tensor.into_tensor().into())) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("[AI YOLO] Inference failed on lens {}: {}", lens_id, e);
+                    return Vec::new();
+                }
             };
             result.remove(0)
         };
 
-        let Ok(view_arr) = output_tensor.to_array_view::<f32>() else {
-            return Vec::new();
+        let view_arr = match output_tensor.to_array_view::<f32>() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("[AI YOLO] Failed to read f32 output tensor: {}", e);
+                return Vec::new();
+            }
         };
 
         // Target COCO classes for CCTV Security:
@@ -162,6 +204,9 @@ impl YoloDetector {
         ];
 
         let shape = view_arr.shape();
+        if !self.logged_shape.swap(true, Ordering::Relaxed) {
+            tracing::info!("[AI YOLO] First inference succeeded; output shape = {:?}", shape);
+        }
         let mut candidates = Vec::new();
 
         // Support BOTH standard YOLOv8 [1, 84, 8400] AND transposed [1, 8400, 84] OR end2end [1, 300, 6]
@@ -175,7 +220,7 @@ impl YoloDetector {
                 for &(cid, cat, lbl) in target_classes {
                     if 4 + cid < shape[1] {
                         let score = view_arr[[0, 4 + cid, a]];
-                        if score > best_conf {
+                        if score.is_finite() && score > best_conf {
                             best_conf = score;
                             best_target = Some((cid, cat, lbl));
                         }
@@ -188,22 +233,26 @@ impl YoloDetector {
                         let mut cy = view_arr[[0, 1, a]];
                         let mut bw = view_arr[[0, 2, a]];
                         let mut bh = view_arr[[0, 3, a]];
-                        if cx > 1.5 || bw > 1.5 {
+                        if !cx.is_finite() || !cy.is_finite() || !bw.is_finite() || !bh.is_finite()
+                        {
+                            continue;
+                        }
+                        if cx > 1.5 || cy > 1.5 || bw > 1.5 || bh > 1.5 {
                             cx /= 640.0;
                             cy /= 640.0;
                             bw /= 640.0;
                             bh /= 640.0;
                         }
-                        let x = (cx - bw * 0.5).clamp(0.0, 1.0) as f64;
-                        let y = (cy - bh * 0.5).clamp(0.0, 1.0) as f64;
-                        let w = (bw as f64).clamp(0.01, 1.0 - x);
-                        let h = (bh as f64).clamp(0.01, 1.0 - y);
+                        let x = (cx - bw * 0.5).clamp(0.0, 0.98) as f64;
+                        let y = (cy - bh * 0.5).clamp(0.0, 0.98) as f64;
+                        let w = (bw as f64).clamp(0.01, (1.0 - x).max(0.01));
+                        let h = (bh as f64).clamp(0.01, (1.0 - y).max(0.01));
 
                         candidates.push(DetectedObject {
                             class_id: cid,
                             category: cat.to_string(),
                             label: lbl.to_string(),
-                            confidence: best_conf,
+                            confidence: best_conf.clamp(0.0, 1.0),
                             x,
                             y,
                             w,
@@ -223,7 +272,7 @@ impl YoloDetector {
                 for &(cid, cat, lbl) in target_classes {
                     if 4 + cid < shape[2] {
                         let score = view_arr[[0, a, 4 + cid]];
-                        if score > best_conf {
+                        if score.is_finite() && score > best_conf {
                             best_conf = score;
                             best_target = Some((cid, cat, lbl));
                         }
@@ -236,22 +285,26 @@ impl YoloDetector {
                         let mut cy = view_arr[[0, a, 1]];
                         let mut bw = view_arr[[0, a, 2]];
                         let mut bh = view_arr[[0, a, 3]];
-                        if cx > 1.5 || bw > 1.5 {
+                        if !cx.is_finite() || !cy.is_finite() || !bw.is_finite() || !bh.is_finite()
+                        {
+                            continue;
+                        }
+                        if cx > 1.5 || cy > 1.5 || bw > 1.5 || bh > 1.5 {
                             cx /= 640.0;
                             cy /= 640.0;
                             bw /= 640.0;
                             bh /= 640.0;
                         }
-                        let x = (cx - bw * 0.5).clamp(0.0, 1.0) as f64;
-                        let y = (cy - bh * 0.5).clamp(0.0, 1.0) as f64;
-                        let w = (bw as f64).clamp(0.01, 1.0 - x);
-                        let h = (bh as f64).clamp(0.01, 1.0 - y);
+                        let x = (cx - bw * 0.5).clamp(0.0, 0.98) as f64;
+                        let y = (cy - bh * 0.5).clamp(0.0, 0.98) as f64;
+                        let w = (bw as f64).clamp(0.01, (1.0 - x).max(0.01));
+                        let h = (bh as f64).clamp(0.01, (1.0 - y).max(0.01));
 
                         candidates.push(DetectedObject {
                             class_id: cid,
                             category: cat.to_string(),
                             label: lbl.to_string(),
-                            confidence: best_conf,
+                            confidence: best_conf.clamp(0.0, 1.0),
                             x,
                             y,
                             w,
@@ -265,7 +318,7 @@ impl YoloDetector {
             // Format C: End-to-End NMS [1, N, 6] -> [x1, y1, x2, y2, score, class_id]
             for a in 0..shape[1] {
                 let score = view_arr[[0, a, 4]];
-                if score < conf_threshold {
+                if !score.is_finite() || score < conf_threshold {
                     continue;
                 }
                 let cid = view_arr[[0, a, 5]] as usize;
@@ -274,21 +327,24 @@ impl YoloDetector {
                     let mut y1 = view_arr[[0, a, 1]];
                     let mut x2 = view_arr[[0, a, 2]];
                     let mut y2 = view_arr[[0, a, 3]];
+                    if !x1.is_finite() || !y1.is_finite() || !x2.is_finite() || !y2.is_finite() {
+                        continue;
+                    }
                     if x2 > 1.5 || y2 > 1.5 {
                         x1 /= 640.0;
                         y1 /= 640.0;
                         x2 /= 640.0;
                         y2 /= 640.0;
                     }
-                    let x = x1.clamp(0.0, 1.0) as f64;
-                    let y = y1.clamp(0.0, 1.0) as f64;
-                    let w = ((x2 - x1) as f64).clamp(0.01, 1.0 - x);
-                    let h = ((y2 - y1) as f64).clamp(0.01, 1.0 - y);
+                    let x = x1.clamp(0.0, 0.98) as f64;
+                    let y = y1.clamp(0.0, 0.98) as f64;
+                    let w = ((x2 - x1) as f64).clamp(0.01, (1.0 - x).max(0.01));
+                    let h = ((y2 - y1) as f64).clamp(0.01, (1.0 - y).max(0.01));
                     candidates.push(DetectedObject {
                         class_id: cid,
                         category: cat.to_string(),
                         label: lbl.to_string(),
-                        confidence: score,
+                        confidence: score.clamp(0.0, 1.0),
                         x,
                         y,
                         w,

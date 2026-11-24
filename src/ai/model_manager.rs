@@ -94,13 +94,7 @@ impl ModelManager {
     pub fn new(models_dir: &Path) -> Self {
         let _ = fs::create_dir_all(models_dir);
         let specs = builtin_model_specs();
-        let mut loaded_map = HashMap::new();
-        for spec in &specs {
-            let path = models_dir.join(&spec.filename);
-            if path.exists() && path.metadata().map(|m| m.len() > 1024).unwrap_or(false) {
-                loaded_map.insert(spec.id.clone(), true);
-            }
-        }
+        let loaded_map = HashMap::new();
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -149,7 +143,7 @@ impl ModelManager {
                 let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
                 let installed = size_bytes > 1024;
                 let downloading = *dl_guard.get(&spec.id).unwrap_or(&false);
-                let loaded = installed && *ld_guard.get(&spec.id).unwrap_or(&installed);
+                let loaded = installed && *ld_guard.get(&spec.id).unwrap_or(&false);
 
                 AiModelStatus {
                     id: spec.id.clone(),
@@ -213,7 +207,6 @@ impl ModelManager {
             fs::rename(&temp_path, &target_path)
                 .map_err(|e| format!("Không thể hoàn tất lưu file model: {}", e))?;
 
-            self.mark_loaded(model_id, true);
             tracing::info!(
                 "[AI Model] Successfully installed {} ({:.2} MB)",
                 spec.filename,

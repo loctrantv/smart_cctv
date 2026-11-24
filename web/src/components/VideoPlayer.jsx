@@ -46,6 +46,10 @@ export default function VideoPlayer({
   const secondaryVideoRef = useRef(null);
   const pcRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const firstFrameReceivedRef = useRef(false);
+
+  const webrtcStreamPath = streams?.webrtc || '';
+  const hlsStreamPath = streams?.hls || '';
 
   const [mode, setMode] = useState('webrtc'); // webrtc | hls | error
   const [connected, setConnected] = useState(false);
@@ -149,6 +153,7 @@ export default function VideoPlayer({
   const handleLoadedMetadata = (e) => {
     const video = e.target;
     if (video.videoWidth && video.videoHeight) {
+      firstFrameReceivedRef.current = true;
       setConnected(true);
       const ratio = video.videoWidth / video.videoHeight;
       // Dual-lens cameras stack two 16:9 frames vertically -> ratio ~ 0.888 (8:9) or < 1.15
@@ -166,15 +171,15 @@ export default function VideoPlayer({
   };
 
   useEffect(() => {
-    if (!streams || !streamId) return;
+    if (!webrtcStreamPath || !hlsStreamPath || !streamId) return;
 
     let cancelled = false;
-    let firstFrameReceived = false;
+    firstFrameReceivedRef.current = false;
     let fallbackTimer = null;
     setConnected(false);
 
     const switchToHlsFallback = (reason) => {
-      if (cancelled || firstFrameReceived) return;
+      if (cancelled || firstFrameReceivedRef.current) return;
       console.warn(`[VideoPlayer] Switching ${streamId} to HLS fallback (${reason})`);
       if (pcRef.current) {
         try {
@@ -262,7 +267,7 @@ export default function VideoPlayer({
           headers.Authorization = `Bearer ${token}`;
         }
 
-        const response = await fetch(resolveStreamUrl(streams.webrtc), {
+        const response = await fetch(resolveStreamUrl(webrtcStreamPath), {
           method: 'POST',
           headers,
           credentials: 'include',
@@ -294,7 +299,7 @@ export default function VideoPlayer({
         }
 
         const Hls = (await import('hls.js')).default;
-        const hlsUrl = resolveStreamUrl(streams.hls);
+        const hlsUrl = resolveStreamUrl(hlsStreamPath);
 
         if (!Hls.isSupported()) {
           if (videoRef.current?.canPlayType('application/vnd.apple.mpegurl')) {
@@ -359,7 +364,7 @@ export default function VideoPlayer({
         pcRef.current = null;
       }
     };
-  }, [streamId, streams, mode, autoPlay, retryKey]);
+  }, [streamId, webrtcStreamPath, hlsStreamPath, mode, autoPlay, retryKey]);
 
   // Instant Frame Snapshot to PNG (respects active lens mode: full 8:9, top lens, or bottom lens)
   const handleSnapshot = (e) => {

@@ -100,11 +100,15 @@ pub async fn create_face_handler(
             )
                 .into_response();
         }
-        // Automatically extract 512-D facial embedding vector in Rust!
-        encoding_json = state
-            .detection_engine
-            .face_engine
-            .extract_embedding_from_bytes(&bytes);
+        // Extract facial embedding vector on a blocking thread so ONNX inference never stalls live streams
+        let face_engine = state.detection_engine.face_engine.clone();
+        let bytes_for_ai = bytes;
+        encoding_json = tokio::task::spawn_blocking(move || {
+            face_engine.extract_embedding_from_bytes(&bytes_for_ai)
+        })
+        .await
+        .ok()
+        .flatten();
         photo_filename = Some(filename);
     }
 
@@ -159,10 +163,14 @@ pub async fn update_face_handler(
                         let _ = fs::remove_file(old_full);
                     }
                 }
-                new_encoding = state
-                    .detection_engine
-                    .face_engine
-                    .extract_embedding_from_bytes(&bytes);
+                let face_engine = state.detection_engine.face_engine.clone();
+                let bytes_for_ai = bytes;
+                new_encoding = tokio::task::spawn_blocking(move || {
+                    face_engine.extract_embedding_from_bytes(&bytes_for_ai)
+                })
+                .await
+                .ok()
+                .flatten();
                 new_photo = Some(filename);
             }
         }

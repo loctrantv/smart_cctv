@@ -150,6 +150,7 @@ async fn main() {
         config.go2rtc_rtsp_url.clone(),
         recording_mgr.clone(),
     );
+    detection_engine.load_installed_models_in_background();
 
     let state = Arc::new(AppState {
         config: config.clone(),

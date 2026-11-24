@@ -19,33 +19,99 @@ pub struct FaceMatchResult {
 #[derive(Clone)]
 pub struct FaceEngine {
     rec_session: Arc<Mutex<Option<OnnxModel>>>,
+    /// OpenCV Zoo `face_recognition_sface_2021dec.onnx` expects RGB float32 in [0..255]
+    /// (matching `cv::dnn::blobFromImage(img, 1.0, Size(112,112), Scalar(0,0,0), true, false)`).
+    /// Standard ArcFace models expect RGB normalized to [-1..1] via `(p - 127.5) / 127.5`.
+    is_sface: Arc<Mutex<bool>>,
 }
 
 impl FaceEngine {
     pub fn new() -> Self {
         Self {
             rec_session: Arc::new(Mutex::new(None)),
+            is_sface: Arc::new(Mutex::new(true)),
         }
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.rec_session.lock().unwrap().is_some()
+        self.rec_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// Cosine similarity threshold calibrated for the active embedding backend:
+    /// - OpenCV SFace official threshold is 0.363 (use 0.38 for CCTV crops)
+    /// - Fallback 512-D spatial-chromatic descriptor needs a stricter threshold (0.85)
+    pub fn recommended_threshold(&self) -> f32 {
+        if self.is_loaded() {
+            0.38
+        } else {
+            0.85
+        }
     }
 
     pub fn load_rec_model(&self, model_path: &Path) -> Result<(), String> {
-        let model = tract_onnx::onnx()
+        let typed = match tract_onnx::onnx()
             .model_for_path(model_path)
-            .map_err(|e| format!("Failed to read Face ONNX model: {}", e))?
+            .map_err(|e| {
+                tracing::error!(
+                    "[AI Face] Failed to read Face ONNX model {:?}: {}",
+                    model_path,
+                    e
+                );
+                format!("Failed to read Face ONNX model: {}", e)
+            })?
             .with_input_fact(0, f32::fact([1, 3, 112, 112]).into())
-            .map_err(|e| format!("Failed to set 112x112 face input shape: {}", e))?
+            .map_err(|e| {
+                tracing::error!("[AI Face] Failed to set 112x112 face input shape: {}", e);
+                format!("Failed to set 112x112 face input shape: {}", e)
+            })?
             .into_optimized()
-            .map_err(|e| format!("Failed to optimize Face ONNX graph: {}", e))?
-            .into_runnable()
-            .map_err(|e| format!("Failed to compile runnable Face plan: {}", e))?;
+        {
+            Ok(m) => m,
+            Err(opt_err) => {
+                tracing::warn!(
+                    "[AI Face] into_optimized() failed ({}), falling back to into_decluttered()",
+                    opt_err
+                );
+                tract_onnx::onnx()
+                    .model_for_path(model_path)
+                    .map_err(|e| format!("Failed to read Face ONNX model: {}", e))?
+                    .with_input_fact(0, f32::fact([1, 3, 112, 112]).into())
+                    .map_err(|e| format!("Failed to set 112x112 face input shape: {}", e))?
+                    .into_decluttered()
+                    .map_err(|e| {
+                        tracing::error!("[AI Face] Failed to declutter Face ONNX graph: {}", e);
+                        format!("Failed to declutter Face ONNX graph: {}", e)
+                    })?
+            }
+        };
 
-        let mut guard = self.rec_session.lock().unwrap();
-        *guard = Some(model);
-        tracing::info!("[AI Face] Loaded ArcFace/SFace 112x112 embedding model from {:?}", model_path);
+        let model = typed.into_runnable().map_err(|e| {
+            tracing::error!("[AI Face] Failed to compile runnable Face plan: {}", e);
+            format!("Failed to compile runnable Face plan: {}", e)
+        })?;
+
+        let sface_mode = model_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_lowercase().contains("sface"))
+            .unwrap_or(true);
+
+        {
+            let mut flag = self.is_sface.lock().unwrap_or_else(|e| e.into_inner());
+            *flag = sface_mode;
+        }
+        {
+            let mut guard = self.rec_session.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(model);
+        }
+        tracing::info!(
+            "[AI Face] Loaded Face 112x112 embedding model from {:?} (sface_raw_rgb={})",
+            model_path,
+            sface_mode
+        );
         Ok(())
     }
 
@@ -121,20 +187,41 @@ impl FaceEngine {
         let rgb112 = aligned.resize_exact(112, 112, FilterType::Triangle).to_rgb8();
         let mut input = vec![0.0f32; 3 * 112 * 112];
         let plane = 112 * 112;
+        let sface_raw_rgb = *self.is_sface.lock().unwrap_or_else(|e| e.into_inner());
 
         for (y, x, p) in rgb112.enumerate_pixels() {
             let idx = (y as usize) * 112 + (x as usize);
-            input[idx] = (p[0] as f32 - 127.5) / 128.0;
-            input[plane + idx] = (p[1] as f32 - 127.5) / 128.0;
-            input[2 * plane + idx] = (p[2] as f32 - 127.5) / 128.0;
+            if sface_raw_rgb {
+                // OpenCV Zoo SFace (`face_recognition_sface_2021dec.onnx`):
+                // `cv::dnn::blobFromImage(aligned, 1.0, Size(112,112), Scalar(0,0,0), swapRB=true)`
+                input[idx] = p[0] as f32;
+                input[plane + idx] = p[1] as f32;
+                input[2 * plane + idx] = p[2] as f32;
+            } else {
+                input[idx] = (p[0] as f32 - 127.5) / 127.5;
+                input[plane + idx] = (p[1] as f32 - 127.5) / 127.5;
+                input[2 * plane + idx] = (p[2] as f32 - 127.5) / 127.5;
+            }
         }
 
         let tensor = tract_ndarray::Array4::from_shape_vec((1, 3, 112, 112), input).ok()?;
-        let guard = self.rec_session.lock().unwrap();
+        let guard = self.rec_session.lock().unwrap_or_else(|e| e.into_inner());
         let plan = guard.as_ref()?;
-        let mut result = plan.run(tvec!(tensor.into_tensor().into())).ok()?;
+        let mut result = match plan.run(tvec!(tensor.into_tensor().into())) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("[AI Face] ONNX embedding inference failed: {}", e);
+                return None;
+            }
+        };
         let output = result.remove(0);
-        let view = output.to_array_view::<f32>().ok()?;
+        let view = match output.to_array_view::<f32>() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("[AI Face] Failed to read f32 embedding output: {}", e);
+                return None;
+            }
+        };
         Some(view.iter().copied().collect())
     }
 
@@ -160,13 +247,20 @@ impl FaceEngine {
         }
 
         let (fw, fh) = frame.dimensions();
-        let px = ((person_x * fw as f64) as u32).min(fw.saturating_sub(16));
-        let py = ((person_y * fh as f64) as u32).min(fh.saturating_sub(16));
-        let pw = ((person_w * fw as f64) as u32).clamp(16, fw - px);
-        // Take upper 42% of person bounding box where the head/face is located
-        let ph = ((person_h * 0.42 * fh as f64) as u32).clamp(16, fh - py);
+        if fw < 16 || fh < 16 {
+            return None;
+        }
 
-        let head_crop = DynamicImage::ImageRgb8(frame.view(px, py, pw, ph).to_image());
+        let px = ((person_x.clamp(0.0, 1.0) * fw as f64) as u32).min(fw.saturating_sub(16));
+        let py = ((person_y.clamp(0.0, 1.0) * fh as f64) as u32).min(fh.saturating_sub(16));
+        let raw_pw = ((person_w.clamp(0.0, 1.0) * fw as f64) as u32).clamp(16, (fw - px).max(16));
+        // Focus horizontally on center 70% of person bbox and upper 38% height where head/face sits
+        let head_w = ((raw_pw as f64 * 0.70) as u32).clamp(16, (fw - px).max(16));
+        let head_x = (px + raw_pw.saturating_sub(head_w) / 2).min(fw.saturating_sub(head_w));
+        let head_h = ((person_h.clamp(0.0, 1.0) * 0.38 * fh as f64) as u32)
+            .clamp(16, (fh - py).max(16));
+
+        let head_crop = DynamicImage::ImageRgb8(frame.view(head_x, py, head_w, head_h).to_image());
         let query_vec = self.extract_embedding(&head_crop);
 
         let mut best_match: Option<FaceMatchResult> = None;
@@ -183,12 +277,12 @@ impl FaceEngine {
             }
 
             let sim = cosine_similarity(&query_vec, &db_vec);
-            if sim >= threshold {
+            if sim.is_finite() && sim >= threshold {
                 if best_match.as_ref().map(|b| sim > b.similarity).unwrap_or(true) {
                     best_match = Some(FaceMatchResult {
                         face_id: face.id.clone(),
                         name: face.name.clone(),
-                        similarity: sim,
+                        similarity: sim.clamp(0.0, 1.0),
                     });
                 }
             }

@@ -152,8 +152,20 @@ pub async fn download_ai_model_handler(
         .await
     {
         Ok(path) => {
-            if let Err(e) = state.detection_engine.hot_load_model(&model_id, &path) {
-                tracing::warn!("[AI Model] Downloaded {} but hot-load note: {}", model_id, e);
+            if let Err(e) = state
+                .detection_engine
+                .hot_load_model_async(model_id.clone(), path)
+                .await
+            {
+                tracing::error!("[AI Model] Downloaded {} but hot-load failed: {}", model_id, e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": format!("Đã tải file model '{}' nhưng không thể nạp vào Rust Engine: {}", model_id, e),
+                        "models": state.detection_engine.model_mgr.list_status()
+                    })),
+                )
+                    .into_response();
             }
             Json(json!({
                 "message": format!("Đã tải và kích hoạt model '{}' thành công!", model_id),

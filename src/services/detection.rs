@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use chrono::{Timelike, Utc};
@@ -10,7 +13,7 @@ use image::{imageops::FilterType, DynamicImage, RgbImage};
 use rusqlite::params;
 use serde_json::json;
 use tokio::process::Command;
-use tokio::sync::watch;
+use tokio::sync::{watch, Semaphore};
 use uuid::Uuid;
 
 use crate::ai::{
@@ -18,7 +21,7 @@ use crate::ai::{
     model_manager::ModelManager, tracker::MultiCameraTracker, yolo::YoloDetector,
 };
 use crate::db::{CameraRow, Database};
-use crate::security::{DetectionZone, TripwireLine};
+use crate::security::{resolve_safe_path, DetectionZone, TripwireLine};
 use crate::services::{go2rtc::Go2RtcClient, recording::RecordingManager};
 use crate::ws::WsHub;
 
@@ -37,6 +40,10 @@ pub struct DetectionEngine {
     pub tracker: Arc<MultiCameraTracker>,
     visual_workers: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     sound_workers: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    /// Serializes heavy CPU-bound ONNX inference & model compilation on blocking threads
+    /// so Tokio async workers stay 100% responsive for WebRTC/HLS/WS live streams.
+    ai_semaphore: Arc<Semaphore>,
+    warned_yolo_missing: Arc<AtomicBool>,
 }
 
 impl DetectionEngine {
@@ -54,20 +61,6 @@ impl DetectionEngine {
         let face_engine = FaceEngine::new();
         let alpr_engine = AlprEngine::new();
 
-        // Auto-load any existing ONNX models from disk
-        if let Some(p) = model_mgr.model_path("yolov8n") {
-            let ok = yolo.load_from_file(&p).is_ok();
-            model_mgr.mark_loaded("yolov8n", ok);
-        }
-        if let Some(p) = model_mgr.model_path("arcface_mbf") {
-            let ok = face_engine.load_rec_model(&p).is_ok();
-            model_mgr.mark_loaded("arcface_mbf", ok);
-        }
-        if let Some(p) = model_mgr.model_path("alpr_plate") {
-            let ok = alpr_engine.load_from_file(&p).is_ok();
-            model_mgr.mark_loaded("alpr_plate", ok);
-        }
-
         Self {
             db,
             snapshots_path,
@@ -82,18 +75,138 @@ impl DetectionEngine {
             tracker: Arc::new(MultiCameraTracker::new()),
             visual_workers: Arc::new(Mutex::new(HashMap::new())),
             sound_workers: Arc::new(Mutex::new(HashMap::new())),
+            ai_semaphore: Arc::new(Semaphore::new(1)),
+            warned_yolo_missing: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub fn hot_load_model(&self, model_id: &str, path: &std::path::Path) -> Result<(), String> {
+    /// Load all already-downloaded ONNX models in a background blocking thread so HTTP/WebRTC/HLS
+    /// binds and serves live streams immediately on startup without blocking Tokio workers.
+    pub fn load_installed_models_in_background(&self) {
+        let engine = self.clone();
+        tokio::spawn(async move {
+            let Ok(_permit) = engine.ai_semaphore.clone().acquire_owned().await else {
+                return;
+            };
+            let eng_blocking = engine.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Some(p) = eng_blocking.model_mgr.model_path("yolov8n") {
+                    match eng_blocking.yolo.load_from_file(&p) {
+                        Ok(()) => {
+                            eng_blocking.model_mgr.mark_loaded("yolov8n", true);
+                            eng_blocking.warned_yolo_missing.store(false, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            eng_blocking.model_mgr.mark_loaded("yolov8n", false);
+                            tracing::error!("[AI Boot] Failed loading yolov8n: {}", e);
+                        }
+                    }
+                }
+                if let Some(p) = eng_blocking.model_mgr.model_path("arcface_mbf") {
+                    match eng_blocking.face_engine.load_rec_model(&p) {
+                        Ok(()) => {
+                            eng_blocking.model_mgr.mark_loaded("arcface_mbf", true);
+                            eng_blocking.reindex_known_faces();
+                        }
+                        Err(e) => {
+                            eng_blocking.model_mgr.mark_loaded("arcface_mbf", false);
+                            tracing::error!("[AI Boot] Failed loading arcface_mbf: {}", e);
+                        }
+                    }
+                }
+                if let Some(p) = eng_blocking.model_mgr.model_path("alpr_plate") {
+                    match eng_blocking.alpr_engine.load_from_file(&p) {
+                        Ok(()) => eng_blocking.model_mgr.mark_loaded("alpr_plate", true),
+                        Err(e) => {
+                            eng_blocking.model_mgr.mark_loaded("alpr_plate", false);
+                            tracing::error!("[AI Boot] Failed loading alpr_plate: {}", e);
+                        }
+                    }
+                }
+                if eng_blocking.model_mgr.model_path("yunet_face").is_some() {
+                    eng_blocking.model_mgr.mark_loaded("yunet_face", true);
+                }
+                if eng_blocking.model_mgr.model_path("yamnet_audio").is_some() {
+                    eng_blocking.model_mgr.mark_loaded("yamnet_audio", true);
+                }
+            })
+            .await;
+        });
+    }
+
+    /// Re-extract embeddings for registered faces from their saved photo files whenever the
+    /// active face recognition ONNX model loads, ensuring vector dimensions and preprocessing
+    /// match (e.g. upgrading old 512-D fallback vectors to 128-D SFace ONNX vectors).
+    pub fn reindex_known_faces(&self) {
+        let faces = self.db.list_faces();
+        if faces.is_empty() {
+            return;
+        }
+        let mut updated_count = 0usize;
+        for face in faces {
+            let Some(rel_photo) = face.photo_path.as_deref() else {
+                continue;
+            };
+            let Some(full_path) = resolve_safe_path(&self.snapshots_path, rel_photo) else {
+                continue;
+            };
+            let Ok(bytes) = fs::read(&full_path) else {
+                continue;
+            };
+            if let Some(new_enc) = self.face_engine.extract_embedding_from_bytes(&bytes) {
+                self.db.with_conn(|conn| {
+                    let _ = conn.execute(
+                        "UPDATE faces SET encoding = ?1, updated_at = datetime('now') WHERE id = ?2",
+                        params![new_enc, face.id],
+                    );
+                });
+                updated_count += 1;
+            }
+        }
+        if updated_count > 0 {
+            tracing::info!(
+                "[AI Face] Re-indexed {} registered face(s) to match active SFace/ArcFace model",
+                updated_count
+            );
+        }
+    }
+
+    pub fn hot_load_model(&self, model_id: &str, path: &Path) -> Result<(), String> {
         let res = match model_id {
-            "yolov8n" => self.yolo.load_from_file(path),
-            "arcface_mbf" => self.face_engine.load_rec_model(path),
+            "yolov8n" => {
+                let r = self.yolo.load_from_file(path);
+                if r.is_ok() {
+                    self.warned_yolo_missing.store(false, Ordering::Relaxed);
+                }
+                r
+            }
+            "arcface_mbf" => {
+                let r = self.face_engine.load_rec_model(path);
+                if r.is_ok() {
+                    self.reindex_known_faces();
+                }
+                r
+            }
             "alpr_plate" => self.alpr_engine.load_from_file(path),
             _ => Ok(()),
         };
         self.model_mgr.mark_loaded(model_id, res.is_ok());
         res
+    }
+
+    /// Async wrapper for `hot_load_model` that compiles the ONNX graph on a blocking thread
+    /// without stalling Tokio async workers or dropping live streams.
+    pub async fn hot_load_model_async(&self, model_id: String, path: PathBuf) -> Result<(), String> {
+        let _permit = self
+            .ai_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "AI engine semaphore closed".to_string())?;
+        let engine = self.clone();
+        tokio::task::spawn_blocking(move || engine.hot_load_model(&model_id, &path))
+            .await
+            .map_err(|e| format!("Model load task failed: {}", e))?
     }
 
     pub fn reload_settings(&self) {
@@ -117,7 +230,7 @@ impl DetectionEngine {
 
     pub fn start_detection(&self, camera: CameraRow) {
         {
-            let guard = self.visual_workers.lock().unwrap();
+            let guard = self.visual_workers.lock().unwrap_or_else(|e| e.into_inner());
             if guard.contains_key(&camera.id) {
                 return;
             }
@@ -126,7 +239,7 @@ impl DetectionEngine {
         let (tx, mut rx) = watch::channel(false);
         self.visual_workers
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(camera.id.clone(), tx);
 
         let engine = self.clone();
@@ -136,6 +249,7 @@ impl DetectionEngine {
         tokio::spawn(async move {
             let mut prev_gray_thumb: Option<Vec<u8>> = None;
             let mut last_event_time = Instant::now() - Duration::from_secs(60);
+            let mut jpeg_api_backoff_until = Instant::now();
 
             loop {
                 let interval_ms = engine
@@ -166,16 +280,30 @@ impl DetectionEngine {
                 }
 
                 engine
-                    .process_camera_frame(&fresh_cam, &mut prev_gray_thumb, &mut last_event_time)
+                    .process_camera_frame(
+                        &fresh_cam,
+                        &mut prev_gray_thumb,
+                        &mut last_event_time,
+                        &mut jpeg_api_backoff_until,
+                    )
                     .await;
             }
 
-            engine.visual_workers.lock().unwrap().remove(&cam_id);
+            engine
+                .visual_workers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&cam_id);
         });
     }
 
     pub fn stop_detection(&self, camera_id: &str) {
-        if let Some(tx) = self.visual_workers.lock().unwrap().remove(camera_id) {
+        if let Some(tx) = self
+            .visual_workers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(camera_id)
+        {
             let _ = tx.send(true);
             tracing::info!("[AI DET] Stopped vision worker for {}", camera_id);
         }
@@ -246,31 +374,104 @@ impl DetectionEngine {
         }
     }
 
-    /// Pure AI & Pixel-Diff Vision Pipeline (Legacy Red-Box BFS detector completely removed!)
-    /// 1. Pulls JPEG directly into RAM from go2rtc (Zero disk writes for non-events)
-    /// 2. Checks fast Luma Frame-Differencing motion gate (< 0.15ms)
-    /// 3. Runs Dual-Lens YOLOv8n (Person / Vehicle / Animal), ByteTrack Tripwire & Loitering,
-    ///    ArcFace 512-D Face Recognition, and Vietnam ALPR License Plate Recognition.
+    /// Pure AI & Pixel-Diff Vision Pipeline:
+    /// 1. Pulls JPEG directly into RAM from go2rtc (with backoff to fast FFmpeg RTSP pipe)
+    /// 2. Acquires the AI semaphore asynchronously and offloads ALL CPU-heavy decoding & ONNX
+    ///    inference (Dual-Lens YOLOv8n, ByteTrack, SFace/ArcFace, ALPR) to `spawn_blocking`
+    ///    so Tokio async workers NEVER stall WebRTC / HLS / WebSocket live streams.
     async fn process_camera_frame(
         &self,
         camera: &CameraRow,
         prev_gray_thumb: &mut Option<Vec<u8>>,
         last_event_time: &mut Instant,
+        jpeg_api_backoff_until: &mut Instant,
     ) {
-        // 1. Fetch JPEG bytes directly into RAM
-        let jpeg_bytes = match self.go2rtc.fetch_jpeg_frame(&camera.stream_id).await {
-            Some(b) => b,
-            None => {
-                let rtsp_url = format!("{}/{}", self.go2rtc_rtsp_url, camera.stream_id);
-                match capture_rtsp_jpeg_in_memory(&rtsp_url).await {
-                    Some(b) => b,
-                    None => return,
+        let motion_enabled = self.db.get_setting("detection.motion_enabled", "0") == "1";
+        let person_enabled = self.db.get_setting("detection.person_enabled", "1") != "0";
+        let animal_enabled = self.db.get_setting("detection.animal_enabled", "1") != "0";
+        let vehicle_enabled = self.db.get_setting("detection.vehicle_enabled", "1") != "0";
+
+        if !motion_enabled && !person_enabled && !animal_enabled && !vehicle_enabled {
+            return;
+        }
+
+        // 1. Fetch JPEG bytes directly into RAM without stalling go2rtc
+        let now = Instant::now();
+        let mut jpeg_bytes = if now >= *jpeg_api_backoff_until {
+            match self.go2rtc.fetch_jpeg_frame(&camera.stream_id).await {
+                Some(b) => Some(b),
+                None => {
+                    // Back off `/api/frame.jpeg` for 60s when stream has no MJPEG track
+                    *jpeg_api_backoff_until = now + Duration::from_secs(60);
+                    None
                 }
             }
+        } else {
+            None
         };
 
-        let Ok(dyn_img) = image::load_from_memory(&jpeg_bytes) else {
+        if jpeg_bytes.is_none() {
+            let rtsp_url = format!("{}/{}", self.go2rtc_rtsp_url, camera.stream_id);
+            jpeg_bytes = capture_rtsp_jpeg_in_memory(&rtsp_url).await;
+        }
+
+        let Some(jpeg_bytes) = jpeg_bytes else {
             return;
+        };
+
+        // Acquire single-permit AI semaphore asynchronously so multiple cameras never
+        // spike CPU/RAM simultaneously or starve Axum live stream proxies.
+        let Ok(Ok(_permit)) = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.ai_semaphore.clone().acquire_owned(),
+        )
+        .await
+        else {
+            return;
+        };
+
+        let engine = self.clone();
+        let cam_clone = camera.clone();
+        let prev_gray_in = prev_gray_thumb.take();
+        let can_save_event = last_event_time.elapsed() >= Duration::from_secs(4);
+
+        let blocking_res = tokio::task::spawn_blocking(move || {
+            engine.analyze_frame_blocking(&cam_clone, &jpeg_bytes, prev_gray_in, can_save_event)
+        })
+        .await;
+
+        match blocking_res {
+            Ok((next_prev_gray, saved_event, motion_rec_duration)) => {
+                *prev_gray_thumb = next_prev_gray;
+                if saved_event {
+                    *last_event_time = Instant::now();
+                }
+                if let Some(dur) = motion_rec_duration {
+                    self.recording_mgr
+                        .start_motion_recording(camera.clone(), dur);
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[AI DET] Blocking AI worker panicked for {}: {}",
+                    camera.name,
+                    e
+                );
+            }
+        }
+    }
+
+    /// Runs synchronously on Tokio's dedicated blocking thread pool (`spawn_blocking`).
+    /// Returns `(next_prev_gray_thumb, saved_event, optional_motion_recording_duration)`.
+    fn analyze_frame_blocking(
+        &self,
+        camera: &CameraRow,
+        jpeg_bytes: &[u8],
+        mut prev_gray_thumb: Option<Vec<u8>>,
+        can_save_event: bool,
+    ) -> (Option<Vec<u8>>, bool, Option<u64>) {
+        let Ok(dyn_img) = image::load_from_memory(jpeg_bytes) else {
+            return (prev_gray_thumb, false, None);
         };
         let rgb_img = dyn_img.to_rgb8();
 
@@ -282,11 +483,7 @@ impl DetectionEngine {
 
         // 2. Fast Luma Frame-Differencing + Motion Centroid Bounding Box in RAM (< 0.15ms)
         let (motion_diff_score, motion_bbox) =
-            compute_frame_motion_diff(&dyn_img, prev_gray_thumb, &zones);
-
-        // Cooldown 4s between saving DB/disk snapshots on same camera,
-        // while still running YOLOv8n below so Live Stream HUD boxes update smoothly!
-        let can_save_event = last_event_time.elapsed() >= Duration::from_secs(4);
+            compute_frame_motion_diff(&dyn_img, &mut prev_gray_thumb, &zones);
 
         let conf_thresh = self
             .db
@@ -297,8 +494,11 @@ impl DetectionEngine {
 
         let motion_enabled = self.db.get_setting("detection.motion_enabled", "0") == "1";
         let person_enabled = self.db.get_setting("detection.person_enabled", "1") != "0";
+        let face_enabled = self.db.get_setting("detection.face_enabled", "1") != "0";
         let animal_enabled = self.db.get_setting("detection.animal_enabled", "1") != "0";
         let vehicle_enabled = self.db.get_setting("detection.vehicle_enabled", "1") != "0";
+        let plate_enabled = self.db.get_setting("detection.plate_enabled", "1") != "0";
+        let tripwire_enabled = self.db.get_setting("detection.tripwire_enabled", "1") != "0";
 
         let mut triggered_events: Vec<(
             String,
@@ -310,143 +510,158 @@ impl DetectionEngine {
         )> = Vec::new();
         let mut live_boxes_json = Vec::new();
 
-        // Lazy auto-load YOLOv8n if file exists on disk but wasn't loaded yet
-        if !self.yolo.is_loaded() {
-            if let Some(p) = self.model_mgr.model_path("yolov8n") {
-                let ok = self.yolo.load_from_file(&p).is_ok();
-                self.model_mgr.mark_loaded("yolov8n", ok);
-            }
-        }
+        let any_object_ai = person_enabled || animal_enabled || vehicle_enabled;
 
         // 3. YOLOv8n Dual-Lens Object Detection (Person / Vehicle / Animal)
-        if self.yolo.is_loaded() {
-            let raw_detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
-            let detections: Vec<_> = raw_detections
-                .into_iter()
-                .filter(|d| match d.category.as_str() {
-                    "person" => person_enabled,
-                    "animal" => animal_enabled,
-                    "vehicle" => vehicle_enabled,
-                    _ => true,
-                })
-                .collect();
+        if any_object_ai {
+            if self.yolo.is_loaded() {
+                let raw_detections = self.yolo.detect_dual_lens(&rgb_img, conf_thresh);
+                let detections: Vec<_> = raw_detections
+                    .into_iter()
+                    .filter(|d| match d.category.as_str() {
+                        "person" => person_enabled,
+                        "animal" => animal_enabled,
+                        "vehicle" => vehicle_enabled,
+                        _ => true,
+                    })
+                    .collect();
 
-            // Evaluate ByteTrack Tripwire Line Crossing & Zone Intrusion / Loitering
-            let rule_alerts =
-                self.tracker
-                    .update_and_evaluate(&camera.id, &detections, &zones, &tripwires);
-            for rule in rule_alerts {
-                triggered_events.push((
-                    rule.event_type,
-                    rule.label,
-                    rule.confidence as f64,
-                    None,
-                    (rule.bbox_x, rule.bbox_y, rule.bbox_w, rule.bbox_h),
-                    json!({ "track_id": rule.track_id }).to_string(),
-                ));
-            }
-
-            let known_faces = self.db.list_faces();
-
-            for det in &detections {
-                if !is_inside_zones(det.x + det.w * 0.5, det.y + det.h * 0.85, &zones) {
-                    continue;
-                }
-
-                let mut box_type = det.category.clone();
-                let mut box_label = det.label.clone();
-                let mut box_conf = det.confidence as f64;
-
-                // Tier 3A: If person detected -> Run Face Recognition (512-D Cosine Match)
-                if det.category == "person" {
-                    if let Some(face_match) = self.face_engine.match_person_crop(
-                        &rgb_img,
-                        det.x,
-                        det.y,
-                        det.w,
-                        det.h,
-                        &known_faces,
-                        0.58,
-                    ) {
-                        box_type = "face".to_string();
-                        box_label = face_match.name.clone();
-                        box_conf = face_match.similarity as f64;
-
+                // Evaluate ByteTrack Tripwire Line Crossing & Zone Intrusion / Loitering
+                if tripwire_enabled && (!tripwires.is_empty() || !zones.is_empty()) {
+                    let rule_alerts = self.tracker.update_and_evaluate(
+                        &camera.id,
+                        &detections,
+                        &zones,
+                        &tripwires,
+                    );
+                    for rule in rule_alerts {
                         triggered_events.push((
-                            "face".to_string(),
-                            face_match.name.clone(),
-                            face_match.similarity as f64,
-                            Some(face_match.face_id),
-                            (det.x, det.y, det.w, det.h),
-                            json!({ "lens": det.lens }).to_string(),
-                        ));
-                    }
-                }
-
-                // Tier 3B: If vehicle detected -> Run ALPR License Plate Recognition
-                if det.category == "vehicle" && self.alpr_engine.is_loaded() {
-                    if let Some(plate) = self.alpr_engine.recognize_from_vehicle_crop(
-                        &rgb_img, det.x, det.y, det.w, det.h,
-                    ) {
-                        live_boxes_json.push(json!({
-                            "type": "plate",
-                            "label": plate.plate_number,
-                            "confidence": plate.confidence,
-                            "x": plate.x,
-                            "y": plate.y,
-                            "w": plate.w,
-                            "h": plate.h,
-                            "lens": det.lens
-                        }));
-                        triggered_events.push((
-                            "plate".to_string(),
-                            plate.plate_number.clone(),
-                            plate.confidence as f64,
+                            rule.event_type,
+                            rule.label,
+                            rule.confidence as f64,
                             None,
-                            (plate.x, plate.y, plate.w, plate.h),
-                            json!({ "vehicle_type": det.label, "lens": det.lens }).to_string(),
+                            (rule.bbox_x, rule.bbox_y, rule.bbox_w, rule.bbox_h),
+                            json!({ "track_id": rule.track_id }).to_string(),
                         ));
                     }
                 }
 
-                live_boxes_json.push(json!({
-                    "type": box_type,
-                    "label": box_label,
-                    "confidence": box_conf,
-                    "x": det.x,
-                    "y": det.y,
-                    "w": det.w,
-                    "h": det.h,
-                    "lens": det.lens
-                }));
+                // Only query known faces from SQLite when Person + Face AI is enabled AND a person was detected
+                let has_person = detections.iter().any(|d| d.category == "person");
+                let known_faces = if person_enabled && face_enabled && has_person {
+                    self.db.list_faces()
+                } else {
+                    Vec::new()
+                };
+                let face_threshold = self.face_engine.recommended_threshold();
 
-                if box_type != "face" {
-                    let lens_label = if det.lens == 1 {
-                        format!("{} (Mắt 1)", det.label)
-                    } else if det.lens == 2 {
-                        format!("{} (Mắt 2)", det.label)
-                    } else {
-                        det.label.clone()
-                    };
+                for det in &detections {
+                    let foot_in = is_inside_zones(det.x + det.w * 0.5, det.y + det.h * 0.85, &zones);
+                    let center_in =
+                        is_inside_zones(det.x + det.w * 0.5, det.y + det.h * 0.5, &zones);
+                    if !foot_in && !center_in {
+                        continue;
+                    }
 
-                    triggered_events.push((
-                        det.category.clone(),
-                        lens_label,
-                        det.confidence as f64,
-                        None,
-                        (det.x, det.y, det.w, det.h),
-                        json!({ "lens": det.lens, "class": det.label }).to_string(),
-                    ));
+                    let mut box_type = det.category.clone();
+                    let mut box_label = det.label.clone();
+                    let mut box_conf = det.confidence as f64;
+
+                    // Tier 3A: If person detected -> Run Face Recognition (SFace/ArcFace Cosine Match)
+                    if det.category == "person" && face_enabled && !known_faces.is_empty() {
+                        if let Some(face_match) = self.face_engine.match_person_crop(
+                            &rgb_img,
+                            det.x,
+                            det.y,
+                            det.w,
+                            det.h,
+                            &known_faces,
+                            face_threshold,
+                        ) {
+                            box_type = "face".to_string();
+                            box_label = face_match.name.clone();
+                            box_conf = face_match.similarity as f64;
+
+                            triggered_events.push((
+                                "face".to_string(),
+                                face_match.name.clone(),
+                                face_match.similarity as f64,
+                                Some(face_match.face_id),
+                                (det.x, det.y, det.w, det.h),
+                                json!({ "lens": det.lens }).to_string(),
+                            ));
+                        }
+                    }
+
+                    // Tier 3B: If vehicle detected -> Run ALPR License Plate Recognition
+                    if det.category == "vehicle" && plate_enabled && self.alpr_engine.is_loaded() {
+                        if let Some(plate) = self.alpr_engine.recognize_from_vehicle_crop(
+                            &rgb_img, det.x, det.y, det.w, det.h,
+                        ) {
+                            live_boxes_json.push(json!({
+                                "type": "plate",
+                                "label": plate.plate_number,
+                                "confidence": plate.confidence,
+                                "x": plate.x,
+                                "y": plate.y,
+                                "w": plate.w,
+                                "h": plate.h,
+                                "lens": det.lens
+                            }));
+                            triggered_events.push((
+                                "plate".to_string(),
+                                plate.plate_number.clone(),
+                                plate.confidence as f64,
+                                None,
+                                (plate.x, plate.y, plate.w, plate.h),
+                                json!({ "vehicle_type": det.label, "lens": det.lens }).to_string(),
+                            ));
+                        }
+                    }
+
+                    live_boxes_json.push(json!({
+                        "type": box_type,
+                        "label": box_label,
+                        "confidence": box_conf,
+                        "x": det.x,
+                        "y": det.y,
+                        "w": det.w,
+                        "h": det.h,
+                        "lens": det.lens
+                    }));
+
+                    if box_type != "face" {
+                        let lens_label = if det.lens == 1 {
+                            format!("{} (Mắt 1)", det.label)
+                        } else if det.lens == 2 {
+                            format!("{} (Mắt 2)", det.label)
+                        } else {
+                            det.label.clone()
+                        };
+
+                        triggered_events.push((
+                            det.category.clone(),
+                            lens_label,
+                            det.confidence as f64,
+                            None,
+                            (det.x, det.y, det.w, det.h),
+                            json!({ "lens": det.lens, "class": det.label }).to_string(),
+                        ));
+                    }
                 }
-            }
 
-            // Broadcast real-time AI Bounding Boxes to live stream VideoPlayer HUD!
-            self.ws_hub.broadcast(json!({
-                "type": "ai_detections",
-                "camera_id": camera.id,
-                "timestamp": crate::auth::now_ms(),
-                "boxes": live_boxes_json
-            }));
+                // Broadcast real-time AI Bounding Boxes to live stream VideoPlayer HUD!
+                self.ws_hub.broadcast(json!({
+                    "type": "ai_detections",
+                    "camera_id": camera.id,
+                    "timestamp": crate::auth::now_ms(),
+                    "boxes": live_boxes_json
+                }));
+            } else if !self.warned_yolo_missing.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "[AI DET] YOLOv8n model chưa được nạp vào bộ nhớ (hãy tải model 'yolov8n' trong Cài đặt -> Phát hiện AI hoặc kiểm tra log nạp ONNX)."
+                );
+            }
         }
 
         // 4. Optional Pixel-Motion Detection (ONLY runs if user explicitly enabled `detection.motion_enabled == "1"`)
@@ -492,21 +707,19 @@ impl DetectionEngine {
         }
 
         if triggered_events.is_empty() || !can_save_event {
-            return;
+            return (prev_gray_thumb, false, None);
         }
 
-        *last_event_time = Instant::now();
-
         // Draw vivid AI Bounding Boxes + Corner Brackets directly onto the snapshot image in RAM before saving!
-        let mut annotated_img = rgb_img.clone();
+        let mut annotated_img = rgb_img;
         for (evt_type, _, _, _, (bx, by, bw, bh), _) in &triggered_events {
             if *bw > 0.01 && *bh > 0.01 {
                 let color = match evt_type.as_str() {
-                    "person" => [0, 212, 255],        // Cyan for Person
-                    "face" => [168, 85, 247],         // Purple for Known Face
-                    "animal" => [0, 255, 136],        // Neon Green for Dog/Cat (Pet)
+                    "person" => [0, 212, 255],            // Cyan for Person
+                    "face" => [168, 85, 247],             // Purple for Known Face
+                    "animal" => [0, 255, 136],            // Neon Green for Dog/Cat (Pet)
                     "vehicle" | "plate" => [255, 170, 0], // Amber for Vehicle/License Plate
-                    _ => [255, 59, 48],               // Red for Intrusion/Line Crossing
+                    _ => [255, 59, 48],                   // Red for Intrusion/Line Crossing
                 };
                 draw_ai_bounding_box(&mut annotated_img, *bx, *by, *bw, *bh, color);
             }
@@ -521,8 +734,8 @@ impl DetectionEngine {
 
         if annotated_img.save(&snap_full_path).is_err() {
             // Fallback to raw JPEG bytes if encoding fails
-            if fs::write(&snap_full_path, &jpeg_bytes).is_err() {
-                return;
+            if fs::write(&snap_full_path, jpeg_bytes).is_err() {
+                return (prev_gray_thumb, false, None);
             }
         }
 
@@ -541,18 +754,19 @@ impl DetectionEngine {
             );
         }
 
-        // Trigger motion recording if enabled
-        if self.db.get_setting("recording.on_motion_enabled", "0") == "1" {
-            let dur = self
-                .db
-                .get_setting("recording.on_motion_duration", "30")
-                .parse::<u64>()
-                .unwrap_or(30);
-            self.recording_mgr
-                .start_motion_recording(camera.clone(), dur);
-        }
+        let motion_rec_dur = if self.db.get_setting("recording.on_motion_enabled", "0") == "1" {
+            Some(
+                self.db
+                    .get_setting("recording.on_motion_duration", "30")
+                    .parse::<u64>()
+                    .unwrap_or(30),
+            )
+        } else {
+            None
+        };
 
         cleanup_camera_snapshots(&cam_snap_dir, 150);
+        (prev_gray_thumb, true, motion_rec_dur)
     }
 
     async fn process_camera_audio(&self, camera: &CameraRow) {
@@ -720,10 +934,12 @@ fn draw_ai_bounding_box(
         return;
     }
 
-    let x1 = ((nx * img_w as f64).round() as i32).clamp(0, img_w as i32 - 1) as u32;
-    let y1 = ((ny * img_h as f64).round() as i32).clamp(0, img_h as i32 - 1) as u32;
-    let x2 = (((nx + nw) * img_w as f64).round() as i32).clamp(x1 as i32 + 1, img_w as i32 - 1) as u32;
-    let y2 = (((ny + nh) * img_h as f64).round() as i32).clamp(y1 as i32 + 1, img_h as i32 - 1) as u32;
+    let x1 = ((nx.clamp(0.0, 1.0) * img_w as f64).round() as i32).clamp(0, img_w as i32 - 2) as u32;
+    let y1 = ((ny.clamp(0.0, 1.0) * img_h as f64).round() as i32).clamp(0, img_h as i32 - 2) as u32;
+    let x2 = (((nx + nw).clamp(0.0, 1.0) * img_w as f64).round() as i32)
+        .clamp(x1 as i32 + 1, img_w as i32 - 1) as u32;
+    let y2 = (((ny + nh).clamp(0.0, 1.0) * img_h as f64).round() as i32)
+        .clamp(y1 as i32 + 1, img_h as i32 - 1) as u32;
 
     let thickness = 3u32;
     let rgb_pixel = image::Rgb(color);
@@ -862,35 +1078,42 @@ fn compute_frame_motion_diff(
 
     let bx = (min_cx as f64 / bw_cells as f64).clamp(0.0, 0.94);
     let by = (min_cy as f64 / bh_cells as f64).clamp(0.0, 0.94);
-    let bw = (((max_cx - min_cx + 1) as f64) / bw_cells as f64).clamp(0.06, 1.0 - bx);
+    let bw = (((max_cx - min_cx + 1) as f64) / bw_cells as f64).clamp(0.06, (1.0 - bx).max(0.06));
     let bh = (((max_cy - min_cy + 1) as f64) / bh_cells as f64).clamp(0.06, 0.48);
 
     (score, Some((bx, by, bw, bh, lens_id)))
 }
 
 async fn capture_rtsp_jpeg_in_memory(rtsp_url: &str) -> Option<Vec<u8>> {
-    let child = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            rtsp_url,
-            "-vframes",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-analyzeduration",
+        "1000000",
+        "-probesize",
+        "1000000",
+        "-i",
+        rtsp_url,
+        "-vframes",
+        "1",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "-",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
 
-    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(7), child).await else {
+    let child = cmd.spawn().ok()?;
+    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(6), child.wait_with_output()).await
+    else {
         return None;
     };
     if out.status.success() && out.stdout.len() > 1000 {
@@ -901,27 +1124,30 @@ async fn capture_rtsp_jpeg_in_memory(rtsp_url: &str) -> Option<Vec<u8>> {
 }
 
 async fn measure_audio_signature(rtsp_url: &str) -> Option<(f64, f64, f64)> {
-    let fut = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            rtsp_url,
-            "-vn",
-            "-af",
-            "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level,ametadata=print:key=lavfi.astats.Overall.Peak_level",
-            "-f",
-            "null",
-            "-t",
-            "3",
-            "-",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-hide_banner",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        rtsp_url,
+        "-vn",
+        "-af",
+        "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level,ametadata=print:key=lavfi.astats.Overall.Peak_level",
+        "-f",
+        "null",
+        "-t",
+        "3",
+        "-",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
 
-    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(8), fut).await else {
+    let child = cmd.spawn().ok()?;
+    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(8), child.wait_with_output()).await
+    else {
         return None;
     };
     let stderr = String::from_utf8_lossy(&out.stderr);

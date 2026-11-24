@@ -30,23 +30,49 @@ impl AlprEngine {
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.session.lock().unwrap().is_some()
+        self.session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     pub fn load_from_file(&self, model_path: &Path) -> Result<(), String> {
-        let model = tract_onnx::onnx()
+        let typed = match tract_onnx::onnx()
             .model_for_path(model_path)
-            .map_err(|e| format!("Failed to read ALPR ONNX model: {}", e))?
+            .map_err(|e| {
+                tracing::error!("[AI ALPR] Failed to read ALPR ONNX model {:?}: {}", model_path, e);
+                format!("Failed to read ALPR ONNX model: {}", e)
+            })?
             .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
             .map_err(|e| format!("Failed to set ALPR input shape: {}", e))?
             .into_optimized()
-            .map_err(|e| format!("Failed to optimize ALPR graph: {}", e))?
+        {
+            Ok(m) => m,
+            Err(opt_err) => {
+                tracing::warn!(
+                    "[AI ALPR] into_optimized() failed ({}), falling back to into_decluttered()",
+                    opt_err
+                );
+                tract_onnx::onnx()
+                    .model_for_path(model_path)
+                    .map_err(|e| format!("Failed to read ALPR ONNX model: {}", e))?
+                    .with_input_fact(0, f32::fact([1, 3, 640, 640]).into())
+                    .map_err(|e| format!("Failed to set ALPR input shape: {}", e))?
+                    .into_decluttered()
+                    .map_err(|e| format!("Failed to declutter ALPR graph: {}", e))?
+            }
+        };
+
+        let model = typed
             .into_runnable()
             .map_err(|e| format!("Failed to compile runnable ALPR plan: {}", e))?;
 
-        let mut guard = self.session.lock().unwrap();
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(model);
-        tracing::info!("[AI ALPR] Loaded Vietnam License Plate Detector from {:?}", model_path);
+        tracing::info!(
+            "[AI ALPR] Loaded Vietnam License Plate Detector from {:?}",
+            model_path
+        );
         Ok(())
     }
 
@@ -64,10 +90,13 @@ impl AlprEngine {
         }
 
         let (fw, fh) = frame.dimensions();
-        let vx = ((veh_x * fw as f64) as u32).min(fw.saturating_sub(24));
-        let vy = ((veh_y * fh as f64) as u32).min(fh.saturating_sub(24));
-        let vw = ((veh_w * fw as f64) as u32).clamp(24, fw - vx);
-        let vh = ((veh_h * fh as f64) as u32).clamp(24, fh - vy);
+        if fw < 24 || fh < 24 {
+            return None;
+        }
+        let vx = ((veh_x.clamp(0.0, 1.0) * fw as f64) as u32).min(fw.saturating_sub(24));
+        let vy = ((veh_y.clamp(0.0, 1.0) * fh as f64) as u32).min(fh.saturating_sub(24));
+        let vw = ((veh_w.clamp(0.0, 1.0) * fw as f64) as u32).clamp(24, (fw - vx).max(24));
+        let vh = ((veh_h.clamp(0.0, 1.0) * fh as f64) as u32).clamp(24, (fh - vy).max(24));
 
         let crop = image::DynamicImage::ImageRgb8(frame.view(vx, vy, vw, vh).to_image());
         let resized = crop
@@ -85,7 +114,7 @@ impl AlprEngine {
 
         let tensor = tract_ndarray::Array4::from_shape_vec((1, 3, 640, 640), input).ok()?;
         let output = {
-            let guard = self.session.lock().unwrap();
+            let guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
             let plan = guard.as_ref()?;
             let mut res = plan.run(tvec!(tensor.into_tensor().into())).ok()?;
             res.remove(0)
@@ -102,17 +131,17 @@ impl AlprEngine {
 
         for a in 0..shape[2] {
             let score = view[[0, 4, a]];
-            if score > best_conf {
+            if score.is_finite() && score > best_conf {
                 best_conf = score;
                 let cx = (view[[0, 0, a]] / 640.0) as f64;
                 let cy = (view[[0, 1, a]] / 640.0) as f64;
                 let bw = (view[[0, 2, a]] / 640.0) as f64;
                 let bh = (view[[0, 3, a]] / 640.0) as f64;
                 best_box = Some((
-                    veh_x + (cx - bw * 0.5).clamp(0.0, 1.0) * veh_w,
-                    veh_y + (cy - bh * 0.5).clamp(0.0, 1.0) * veh_h,
-                    bw * veh_w,
-                    bh * veh_h,
+                    (veh_x + (cx - bw * 0.5).clamp(0.0, 1.0) * veh_w).clamp(0.0, 0.98),
+                    (veh_y + (cy - bh * 0.5).clamp(0.0, 1.0) * veh_h).clamp(0.0, 0.98),
+                    (bw * veh_w).clamp(0.01, 1.0),
+                    (bh * veh_h).clamp(0.01, 1.0),
                 ));
             }
         }
@@ -125,8 +154,8 @@ impl AlprEngine {
             confidence: best_conf,
             x: px,
             y: py,
-            w: pw,
-            h: ph,
+            w: pw.min((1.0 - px).max(0.01)),
+            h: ph.min((1.0 - py).max(0.01)),
         })
     }
 
@@ -139,10 +168,13 @@ impl AlprEngine {
         ph: f64,
     ) -> String {
         let (fw, fh) = frame.dimensions();
-        let x0 = ((px * fw as f64) as u32).min(fw.saturating_sub(8));
-        let y0 = ((py * fh as f64) as u32).min(fh.saturating_sub(8));
-        let w = ((pw * fw as f64) as u32).clamp(8, fw - x0);
-        let h = ((ph * fh as f64) as u32).clamp(8, fh - y0);
+        if fw < 8 || fh < 8 {
+            return "BIỂN SỐ (VN)".to_string();
+        }
+        let x0 = ((px.clamp(0.0, 1.0) * fw as f64) as u32).min(fw.saturating_sub(8));
+        let y0 = ((py.clamp(0.0, 1.0) * fh as f64) as u32).min(fh.saturating_sub(8));
+        let w = ((pw.clamp(0.0, 1.0) * fw as f64) as u32).clamp(8, (fw - x0).max(8));
+        let h = ((ph.clamp(0.0, 1.0) * fh as f64) as u32).clamp(8, (fh - y0).max(8));
 
         let is_two_line = (w as f64 / h.max(1) as f64) < 2.2;
         if is_two_line {

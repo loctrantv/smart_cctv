@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 pub struct Go2RtcClient {
     base_url: String,
     http: reqwest::Client,
+    frame_http: reqwest::Client,
 }
 
 impl Go2RtcClient {
@@ -15,9 +16,18 @@ impl Go2RtcClient {
             .build()
             .unwrap_or_default();
 
+        // Dedicated short-timeout client for AI JPEG frame grabs so slow `/api/frame.jpeg`
+        // transcodes never saturate the live WebRTC/HLS HTTP connection pool.
+        let frame_http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .pool_max_idle_per_host(4)
+            .build()
+            .unwrap_or_default();
+
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http,
+            frame_http,
         }
     }
 
@@ -115,11 +125,15 @@ impl Go2RtcClient {
         Ok((status, content_type, bytes))
     }
 
-    /// Fetch a JPEG snapshot directly into RAM (Zero disk I/O!)
+    /// Fetch a JPEG snapshot directly into RAM (Zero disk I/O!) with short isolated timeout
     pub async fn fetch_jpeg_frame(&self, stream_id: &str) -> Option<Vec<u8>> {
         let path = format!("/api/frame.jpeg?src={}", urlencoding::encode(stream_id));
-        let (status, _, bytes) = self.fetch_raw(&path).await.ok()?;
-        if status == 200 && bytes.len() > 1000 {
+        let resp = self.frame_http.get(self.url(&path)).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let bytes = resp.bytes().await.ok()?.to_vec();
+        if bytes.len() > 1000 {
             Some(bytes)
         } else {
             None
