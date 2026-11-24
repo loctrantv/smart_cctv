@@ -212,13 +212,14 @@ export function TechDialogProvider({ children }) {
 }
 
 // Helper: Compute viewport-clamped fixed coordinates so popovers never get clipped by overflow:auto parents
-function computePopoverStyle(triggerEl, minWidth = 200, estHeight = 260) {
+function computePopoverStyle(triggerEl, minWidth = 160, estHeight = 260, fixedWidth = false) {
   if (!triggerEl) return { position: 'fixed', top: 64, left: 12, minWidth, zIndex: 9999 };
   const rect = triggerEl.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const width = Math.min(Math.max(rect.width, minWidth), vw - 16);
-  const left = Math.max(8, Math.min(rect.left, vw - width - 8));
+  const maxW = Math.min(fixedWidth ? 300 : 320, vw - 16);
+  const resolvedMinW = Math.min(Math.max(rect.width, minWidth), maxW);
+  const left = Math.max(8, Math.min(rect.left, vw - resolvedMinW - 8));
   const spaceBelow = vh - rect.bottom - 12;
   const openAbove = spaceBelow < estHeight && rect.top > spaceBelow;
   const top = openAbove
@@ -230,8 +231,9 @@ function computePopoverStyle(triggerEl, minWidth = 200, estHeight = 260) {
     left,
     right: 'auto',
     bottom: 'auto',
-    width,
-    maxWidth: vw - 16,
+    minWidth: resolvedMinW,
+    width: fixedWidth ? resolvedMinW : 'max-content',
+    maxWidth: maxW,
     zIndex: 9999,
   };
 }
@@ -256,7 +258,7 @@ export function TechSelect({
   const menuRef = useRef(null);
 
   const updatePos = useCallback(() => {
-    setMenuStyle(computePopoverStyle(wrapRef.current, 190, 260));
+    setMenuStyle(computePopoverStyle(wrapRef.current, 150, 260, false));
   }, []);
 
   useEffect(() => {
@@ -365,7 +367,7 @@ export function TechDatePicker({
   }, [parsedDate]);
 
   const updatePos = useCallback(() => {
-    setPopStyle(computePopoverStyle(wrapRef.current, 276, 315));
+    setPopStyle(computePopoverStyle(wrapRef.current, 276, 315, true));
   }, []);
 
   useEffect(() => {

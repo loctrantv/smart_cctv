@@ -4072,10 +4072,9 @@ a {
 }
 
 .tech-select-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 100%;
+  position: fixed;
+  min-width: 0;
+  width: max-content;
   max-height: 260px;
   overflow-y: auto;
   z-index: 200;
