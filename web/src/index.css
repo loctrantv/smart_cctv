@@ -634,7 +634,7 @@ a {
 }
 
 .playback-video-wrapper {
-  aspect-ratio: 16 / 9; /* Default aspect ratio on mobile so it doesn't collapse */
+  aspect-ratio: auto;
   height: auto;
 }
 
@@ -5135,7 +5135,37 @@ a {
     padding-right: 0;
   }
 
-  /* 7. Playback NVR Mobile Controls */
+  /* 7. Playback NVR Mobile Controls & Full-Size Video Viewport */
+  .playback-video-wrapper.nvr-pro-player-shell {
+    aspect-ratio: auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  .playback-video-wrapper.nvr-pro-player-shell .video-placeholder {
+    min-height: 220px;
+  }
+
+  .playback-video-wrapper.nvr-pro-player-shell .vms-player-root {
+    flex: none;
+    width: 100%;
+    height: auto;
+  }
+
+  .playback-video-wrapper.nvr-pro-player-shell .vms-player-root.lens-mode-stacked {
+    aspect-ratio: 8 / 9;
+    max-height: 62dvh;
+  }
+
+  .playback-video-wrapper.nvr-pro-player-shell .vms-player-root.lens-mode-top,
+  .playback-video-wrapper.nvr-pro-player-shell .vms-player-root.lens-mode-bottom {
+    aspect-ratio: 16 / 9;
+  }
+
+  .playback-video-wrapper.nvr-pro-player-shell .vms-player-root.lens-mode-split {
+    height: auto;
+  }
+
   .nvr-pro-control-bar {
     padding: 8px 10px 10px;
   }
